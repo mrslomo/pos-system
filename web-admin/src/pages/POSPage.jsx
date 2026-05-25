@@ -28,7 +28,7 @@ export default function POSPage() {
   const change = paymentMethod === 'cash' ? Math.max(0, parseFloat(paymentAmount || 0) - total) : 0;
 
   useEffect(() => {
-    const socket = io(import.meta.env.VITE_API_URL?.replace('/api', '') || '');
+    const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000');
     socket.on('scale-weight', ({ weight }) => setScaleWeight(weight));
     return () => socket.disconnect();
   }, []);
