@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "POS Cashier",
+    "slug": "mobile-cashier",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "ใช้กล้องสแกนบาร์โค้ดสินค้า"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#1e3a5f",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": ["CAMERA"]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-barcode-scanner",
+        {
+          "cameraPermission": "ใช้กล้องสแกนบาร์โค้ดสินค้า"
+        }
+      ]
+    ]
+  }
+}
