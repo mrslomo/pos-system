@@ -208,7 +208,7 @@ function StockCountTab({ branchId }) {
                 const diff = hasVal ? parseFloat(val) - parseFloat(item.system_qty) : null;
                 const diffColor = diff === null ? '' : diff > 0.001 ? 'text-green-600' : diff < -0.001 ? 'text-red-600' : 'text-gray-400';
                 return (
-                  <tr key={item.id} className={`hover:bg-gray-50 ${hasVal ? '' : 'opacity-60'}`}>
+                  <tr key={item.id} className={`${hasVal ? (diff !== null && diff < -0.001 ? 'bg-red-50/50 hover:bg-red-50' : 'hover:bg-gray-50') : 'hover:bg-gray-50 opacity-60'}`}>
                     <td className="px-4 py-2 text-gray-400 text-xs">{idx + 1}</td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-2">

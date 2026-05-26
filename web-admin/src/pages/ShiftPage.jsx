@@ -181,10 +181,10 @@ function ShiftCard({ shift, onClose, onViewSales }) {
                 onChange={e => setActualCash(e.target.value)} className="input pl-7" placeholder="0.00" autoFocus />
             </div>
             {actualCash !== '' && (
-              <div className={`mt-1 text-xs font-medium ${parseFloat(actualCash) >= expected ? 'text-green-600' : 'text-red-500'}`}>
+              <div className={`mt-1 px-2 py-1 rounded text-xs font-bold ${parseFloat(actualCash) >= expected ? 'bg-green-50 text-green-700' : 'bg-red-100 text-red-700'}`}>
                 {parseFloat(actualCash) >= expected
-                  ? `เงินเกิน ฿${fmt(parseFloat(actualCash) - expected)}`
-                  : `เงินขาด ฿${fmt(expected - parseFloat(actualCash))}`}
+                  ? `✓ เงินเกิน ฿${fmt(parseFloat(actualCash) - expected)}`
+                  : `⚠ เงินขาด ฿${fmt(expected - parseFloat(actualCash))}`}
               </div>
             )}
           </div>
@@ -378,8 +378,8 @@ function ShiftHistoryTab({ branchId }) {
                 const shiftLabel = SHIFT_TYPES.find(t => t.value === s.shift_type)?.label || s.shift_type;
                 const cashDiff = parseFloat(s.cash_difference || 0);
                 return (
-                  <div key={s.id}>
-                    <button onClick={() => toggleExpand(s.id)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left">
+                  <div key={s.id} className={cashDiff < -0.01 ? 'bg-red-50/60' : ''}>
+                    <button onClick={() => toggleExpand(s.id)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-50/80 text-left" style={cashDiff < -0.01 ? {} : {}}>
                       <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2 items-center text-sm">
                         <div>
                           <p className="font-semibold text-gray-800">{s.cashier_name}</p>
@@ -403,7 +403,7 @@ function ShiftHistoryTab({ branchId }) {
                             : <div>
                                 <p className="text-xs text-gray-400">ผลต่างเงิน</p>
                                 <p className={`font-bold text-sm ${Math.abs(cashDiff) < 0.01 ? 'text-gray-500' : cashDiff > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                  {cashDiff > 0.01 ? `+฿${fmt(cashDiff)}` : cashDiff < -0.01 ? `-฿${fmt(Math.abs(cashDiff))}` : 'ครบ'}
+                                  {cashDiff > 0.01 ? `+฿${fmt(cashDiff)}` : cashDiff < -0.01 ? `⚠ ขาด ฿${fmt(Math.abs(cashDiff))}` : 'ครบ'}
                                 </p>
                               </div>
                           }

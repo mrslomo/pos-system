@@ -110,8 +110,8 @@ export default function DeliveryBillsPage() {
 
   const filteredPartners = partners.filter(p => p.name.toLowerCase().includes(partnerSearch.toLowerCase()) || p.code?.includes(partnerSearch));
 
-  const statusBadge = (s) => s === 'paid' ? 'bg-green-100 text-green-700' : s === 'credit' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600';
-  const statusLabel = (s) => s === 'paid' ? 'ชำระแล้ว' : s === 'credit' ? 'เครดิต' : 'ค้างชำระ';
+  const statusBadge = (s) => s === 'paid' ? 'bg-green-100 text-green-700' : s === 'partial' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700';
+  const statusLabel = (s) => s === 'paid' ? 'ชำระแล้ว' : s === 'partial' ? 'ชำระบางส่วน' : 'ค้างชำระ';
 
   return (
     <div>
@@ -149,13 +149,15 @@ export default function DeliveryBillsPage() {
               <tr><td colSpan={7} className="text-center py-10 text-gray-400">กำลังโหลด...</td></tr>
             ) : bills.length === 0 ? (
               <tr><td colSpan={7} className="text-center py-10 text-gray-400">ไม่พบบิล</td></tr>
-            ) : bills.map(b => (
-              <tr key={b.id} className="border-b hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono text-green-600 font-medium">{b.bill_number}</td>
+            ) : bills.map(b => {
+              const unpaid = b.payment_status !== 'paid';
+              return (
+              <tr key={b.id} className={`border-b hover:bg-gray-50 ${unpaid ? 'bg-red-50/40' : ''}`}>
+                <td className="px-4 py-3 font-mono font-medium text-blue-600">{b.bill_number}</td>
                 <td className="px-4 py-3">{b.bill_date}</td>
-                <td className="px-4 py-3">{b.partner_name || <span className="text-gray-400">ลูกค้าทั่วไป</span>}</td>
+                <td className="px-4 py-3 font-medium">{b.partner_name || <span className="text-gray-400">ลูกค้าทั่วไป</span>}</td>
                 <td className="px-4 py-3">{b.item_count} รายการ</td>
-                <td className="px-4 py-3 font-bold">฿{fmt(b.total_amount)}</td>
+                <td className={`px-4 py-3 font-bold ${unpaid ? 'text-red-600' : 'text-gray-800'}`}>฿{fmt(b.total_amount)}</td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(b.payment_status)}`}>
                     {statusLabel(b.payment_status)}
@@ -171,7 +173,7 @@ export default function DeliveryBillsPage() {
                   </div>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>

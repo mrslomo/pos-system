@@ -136,7 +136,64 @@ router.get('/export', async (req, res, next) => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Report');
 
-    if (type === 'sales') {
+    if (type === 'profit') {
+      const result = await query(`
+        SELECT
+          DATE(s.created_at) as วันที่,
+          COUNT(DISTINCT s.id)::int as จำนวนบิล,
+          ROUND(SUM(s.total_amount)::numeric, 2) as ยอดขาย,
+          ROUND(SUM(si.quantity * si.cost_price)::numeric, 2) as ต้นทุน,
+          ROUND((SUM(s.total_amount) - SUM(si.quantity * si.cost_price))::numeric, 2) as กำไรขั้นต้น,
+          ROUND(CASE WHEN SUM(s.total_amount) > 0
+            THEN (SUM(s.total_amount) - SUM(si.quantity * si.cost_price)) / SUM(s.total_amount) * 100
+            ELSE 0 END::numeric, 2) as อัตรากำไร_pct
+        FROM sales s
+        JOIN sale_items si ON si.sale_id = s.id
+        WHERE s.branch_id = $1 AND s.created_at BETWEEN $2 AND $3
+        GROUP BY DATE(s.created_at) ORDER BY DATE(s.created_at)
+      `, [branchId, from, to]);
+      sheet.columns = [
+        { header: 'วันที่', key: 'วันที่', width: 14 },
+        { header: 'จำนวนบิล', key: 'จำนวนบิล', width: 12 },
+        { header: 'ยอดขาย (฿)', key: 'ยอดขาย', width: 14 },
+        { header: 'ต้นทุน (฿)', key: 'ต้นทุน', width: 14 },
+        { header: 'กำไรขั้นต้น (฿)', key: 'กำไรขั้นต้น', width: 16 },
+        { header: 'Margin (%)', key: 'อัตรากำไร_pct', width: 12 },
+      ];
+      sheet.addRows(result.rows);
+      // Color profit cells red if negative
+      sheet.eachRow((row, rn) => {
+        if (rn === 1) return;
+        const profitCell = row.getCell('กำไรขั้นต้น');
+        if (parseFloat(profitCell.value) < 0) profitCell.font = { color: { argb: 'FFCC0000' }, bold: true };
+      });
+    } else if (type === 'products') {
+      const result = await query(`
+        SELECT p.barcode as บาร์โค้ด, p.name as ชื่อสินค้า, p.unit as หน่วย,
+          SUM(si.quantity)::numeric as จำนวนที่ขาย,
+          ROUND(SUM(si.subtotal)::numeric, 2) as ยอดขายรวม,
+          ROUND(AVG(si.unit_price)::numeric, 2) as ราคาเฉลี่ย,
+          ROUND(SUM(si.quantity * si.cost_price)::numeric, 2) as ต้นทุนรวม,
+          ROUND((SUM(si.subtotal) - SUM(si.quantity * si.cost_price))::numeric, 2) as กำไร
+        FROM sale_items si
+        JOIN sales s ON s.id = si.sale_id
+        JOIN products p ON p.id = si.product_id
+        WHERE s.branch_id = $1 AND s.created_at BETWEEN $2 AND $3
+        GROUP BY p.id, p.barcode, p.name, p.unit
+        ORDER BY ยอดขายรวม DESC
+      `, [branchId, from, to]);
+      sheet.columns = [
+        { header: 'บาร์โค้ด', key: 'บาร์โค้ด', width: 18 },
+        { header: 'ชื่อสินค้า', key: 'ชื่อสินค้า', width: 28 },
+        { header: 'หน่วย', key: 'หน่วย', width: 10 },
+        { header: 'จำนวนที่ขาย', key: 'จำนวนที่ขาย', width: 14 },
+        { header: 'ยอดขายรวม (฿)', key: 'ยอดขายรวม', width: 16 },
+        { header: 'ราคาเฉลี่ย (฿)', key: 'ราคาเฉลี่ย', width: 14 },
+        { header: 'ต้นทุนรวม (฿)', key: 'ต้นทุนรวม', width: 14 },
+        { header: 'กำไร (฿)', key: 'กำไร', width: 14 },
+      ];
+      sheet.addRows(result.rows);
+    } else if (type === 'sales') {
       const result = await query(`
         SELECT s.receipt_number, s.created_at, u.name as cashier, b.name as branch,
           s.subtotal, s.discount_amount, s.total_amount, s.payment_method, s.payment_amount

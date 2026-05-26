@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { reportAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { th } from 'date-fns/locale';
 import { Download, TrendingUp, TrendingDown } from 'lucide-react';
@@ -59,14 +59,22 @@ export default function ReportsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">รายงาน</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button onClick={() => handleExport('sales')} disabled={exporting}
             className="btn-secondary text-sm flex items-center gap-1">
-            <Download size={14} /> Export ยอดขาย
+            <Download size={14} /> ยอดขาย
+          </button>
+          <button onClick={() => handleExport('profit')} disabled={exporting}
+            className="btn-secondary text-sm flex items-center gap-1">
+            <Download size={14} /> กำไรรายวัน
+          </button>
+          <button onClick={() => handleExport('products')} disabled={exporting}
+            className="btn-secondary text-sm flex items-center gap-1">
+            <Download size={14} /> สินค้าขายดี
           </button>
           <button onClick={() => handleExport('stock')} disabled={exporting}
             className="btn-secondary text-sm flex items-center gap-1">
-            <Download size={14} /> Export สต๊อก
+            <Download size={14} /> สต๊อก
           </button>
         </div>
       </div>
@@ -115,20 +123,21 @@ export default function ReportsPage() {
         </div>
 
         <div className="card">
-          <h2 className="font-semibold text-gray-700 mb-4">กำไร/ต้นทุน เปรียบเทียบ</h2>
+          <h2 className="font-semibold text-gray-700 mb-4">ยอดขาย & กำไร (แนวโน้ม)</h2>
           {loading ? <div className="h-52 flex items-center justify-center text-gray-400">กำลังโหลด...</div> : (
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={profitData} margin={{ top: 5, right: 5, bottom: 5, left: 0 }}>
+              <ComposedChart data={profitData} margin={{ top: 5, right: 5, bottom: 5, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="period" tickFormatter={d => format(new Date(d), 'd/M')} tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v) => [`฿${fmt2(v)}`]}
+                <YAxis yAxisId="left" tick={{ fontSize: 11 }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                <Tooltip formatter={(v, n) => [`฿${fmt2(v)}`, n === 'revenue' ? 'ยอดขาย' : n === 'cost' ? 'ต้นทุน' : 'กำไร']}
                   labelFormatter={d => format(new Date(d), 'd MMM', { locale: th })} />
-                <Legend />
-                <Bar dataKey="revenue" name="ยอดขาย" fill="#3b82f6" radius={[2,2,0,0]} stackId="a" />
-                <Bar dataKey="cost" name="ต้นทุน" fill="#f87171" radius={[2,2,0,0]} stackId="b" />
-                <Bar dataKey="profit" name="กำไร" fill="#34d399" radius={[2,2,0,0]} stackId="c" />
-              </BarChart>
+                <Legend formatter={n => n === 'revenue' ? 'ยอดขาย' : n === 'cost' ? 'ต้นทุน' : 'กำไร'} />
+                <Bar yAxisId="left" dataKey="revenue" name="revenue" fill="#3b82f6" radius={[2,2,0,0]} opacity={0.8} />
+                <Bar yAxisId="left" dataKey="cost" name="cost" fill="#f87171" radius={[2,2,0,0]} opacity={0.7} />
+                <Line yAxisId="right" type="monotone" dataKey="profit" name="profit" stroke="#10b981" strokeWidth={2.5} dot={false} />
+              </ComposedChart>
             </ResponsiveContainer>
           )}
         </div>
