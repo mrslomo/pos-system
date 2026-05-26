@@ -307,6 +307,70 @@ const migrations = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_bank_accounts_branch ON bank_accounts(branch_id);
+
+  -- ─── นับสต๊อกรายวัน ────────────────────────────────────────────
+  CREATE TABLE IF NOT EXISTS stock_counts (
+    id SERIAL PRIMARY KEY,
+    branch_id INTEGER REFERENCES branches(id),
+    count_date DATE DEFAULT CURRENT_DATE,
+    status VARCHAR(20) DEFAULT 'open',
+    notes TEXT,
+    created_by INTEGER REFERENCES users(id),
+    closed_by INTEGER REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT NOW(),
+    closed_at TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS stock_count_items (
+    id SERIAL PRIMARY KEY,
+    count_id INTEGER REFERENCES stock_counts(id) ON DELETE CASCADE,
+    product_id INTEGER REFERENCES products(id),
+    product_name VARCHAR(200),
+    system_qty DECIMAL(10,3) DEFAULT 0,
+    counted_qty DECIMAL(10,3),
+    cost_price DECIMAL(10,2) DEFAULT 0,
+    notes TEXT
+  );
+
+  -- ─── สต๊อกเสื่อม/สูญเสีย ───────────────────────────────────────
+  CREATE TABLE IF NOT EXISTS stock_deterioration (
+    id SERIAL PRIMARY KEY,
+    branch_id INTEGER REFERENCES branches(id),
+    product_id INTEGER REFERENCES products(id),
+    product_name VARCHAR(200),
+    quantity DECIMAL(10,3) NOT NULL,
+    cost_price DECIMAL(10,2) DEFAULT 0,
+    total_cost DECIMAL(10,2) DEFAULT 0,
+    reason VARCHAR(200),
+    deterioration_date DATE DEFAULT CURRENT_DATE,
+    user_id INTEGER REFERENCES users(id),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+  );
+
+  -- ─── กะทำงาน ────────────────────────────────────────────────────
+  CREATE TABLE IF NOT EXISTS shifts (
+    id SERIAL PRIMARY KEY,
+    branch_id INTEGER REFERENCES branches(id),
+    user_id INTEGER REFERENCES users(id),
+    shift_date DATE DEFAULT CURRENT_DATE,
+    shift_type VARCHAR(20) DEFAULT 'morning',
+    opening_cash DECIMAL(10,2) DEFAULT 0,
+    actual_cash DECIMAL(10,2),
+    cash_difference DECIMAL(10,2),
+    status VARCHAR(20) DEFAULT 'open',
+    opened_at TIMESTAMP DEFAULT NOW(),
+    closed_at TIMESTAMP,
+    notes TEXT
+  );
+
+  ALTER TABLE sales ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id);
+
+  CREATE INDEX IF NOT EXISTS idx_stock_counts_branch ON stock_counts(branch_id, count_date);
+  CREATE INDEX IF NOT EXISTS idx_stock_count_items ON stock_count_items(count_id);
+  CREATE INDEX IF NOT EXISTS idx_deterioration_branch_date ON stock_deterioration(branch_id, deterioration_date);
+  CREATE INDEX IF NOT EXISTS idx_shifts_branch ON shifts(branch_id, shift_date, status);
+  CREATE INDEX IF NOT EXISTS idx_sales_shift ON sales(shift_id);
 `;
 
 async function migrate() {

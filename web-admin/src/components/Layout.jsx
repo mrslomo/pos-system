@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Package, Warehouse, BarChart3,
   GitBranch, Users, History, Menu, X, LogOut, ChevronDown, Bell,
   FileInput, FileOutput, Layers, Handshake, TrendingUp,
-  RotateCcw, CreditCard, QrCode, Scale
+  RotateCcw, CreditCard, QrCode, Scale, ClipboardList, AlarmClock
 } from 'lucide-react';
 
 const nav = [
@@ -15,6 +15,7 @@ const nav = [
   { to: '/products', label: 'สินค้า', icon: Package },
   { to: '/stock', label: 'สต๊อก', icon: Warehouse },
   { to: '/stock/transactions', label: 'ความเคลื่อนไหวสต๊อก', icon: History },
+  { to: '/stock-count', label: 'นับสต๊อกรายวัน', icon: ClipboardList },
   { divider: true, label: 'ซื้อ-ขาย' },
   { to: '/purchase-bills', label: 'บิลเข้า', icon: FileInput },
   { to: '/delivery-bills', label: 'บิลออก (ค้าส่ง)', icon: FileOutput },
@@ -26,6 +27,8 @@ const nav = [
   { divider: true, label: 'รายงาน' },
   { to: '/sales', label: 'ประวัติการขาย', icon: History },
   { to: '/reports', label: 'รายงาน', icon: BarChart3 },
+  { divider: true, label: 'พนักงาน' },
+  { to: '/shifts', label: 'กะทำงาน', icon: AlarmClock },
   { divider: true, label: 'ระบบ' },
   { to: '/bank-qr', label: 'QR รับเงิน', icon: QrCode },
   { to: '/branches', label: 'สาขา', icon: GitBranch, roles: ['admin'] },

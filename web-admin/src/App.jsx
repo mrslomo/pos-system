@@ -21,6 +21,8 @@ import StockReturnPage from './pages/StockReturnPage';
 import CreditHistoryPage from './pages/CreditHistoryPage';
 import BankQRPage from './pages/BankQRPage';
 import WeighScalePage from './pages/WeighScalePage';
+import StockCountPage from './pages/StockCountPage';
+import ShiftPage from './pages/ShiftPage';
 
 function ProtectedRoute({ children, roles }) {
   const { user, loading } = useAuth();
@@ -53,6 +55,8 @@ function AppRoutes() {
         <Route path="credit-history" element={<CreditHistoryPage />} />
         <Route path="bank-qr" element={<BankQRPage />} />
         <Route path="weigh" element={<WeighScalePage />} />
+        <Route path="stock-count" element={<StockCountPage />} />
+        <Route path="shifts" element={<ShiftPage />} />
       </Route>
     </Routes>
   );

@@ -25,6 +25,9 @@ app.use('/api/held-bills', require('./routes/held-bills'));
 app.use('/api/stock-returns', require('./routes/stock-returns'));
 app.use('/api/bank-accounts', require('./routes/bank-accounts'));
 app.use('/api/uploads', require('./routes/uploads'));
+app.use('/api/stock-counts', require('./routes/stock-counts'));
+app.use('/api/deterioration', require('./routes/deterioration'));
+app.use('/api/shifts', require('./routes/shifts'));
 
 // Scale weight endpoint (polling mode — no WebSocket on Functions)
 app.get('/api/scale/weight', (req, res) => {

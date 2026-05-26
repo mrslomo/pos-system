@@ -54,10 +54,17 @@ router.post('/', async (req, res, next) => {
     const changeAmount = payment_method === 'cash' ? (payment_amount - totalAmount) : 0;
     const receiptNumber = generateReceiptNumber(branchId);
 
+    // Auto-assign to open shift if exists
+    const shiftRow = await client.query(
+      `SELECT id FROM shifts WHERE branch_id=$1 AND user_id=$2 AND status='open' ORDER BY opened_at DESC LIMIT 1`,
+      [branchId, req.user.id]
+    );
+    const shiftId = shiftRow.rows[0]?.id || null;
+
     const saleResult = await client.query(`
-      INSERT INTO sales (receipt_number, branch_id, user_id, subtotal, discount_amount, total_amount, payment_method, payment_amount, change_amount, notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *
-    `, [receiptNumber, branchId, req.user.id, subtotal, discount_amount, totalAmount, payment_method, payment_amount, changeAmount, notes]);
+      INSERT INTO sales (receipt_number, branch_id, user_id, subtotal, discount_amount, total_amount, payment_method, payment_amount, change_amount, notes, shift_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *
+    `, [receiptNumber, branchId, req.user.id, subtotal, discount_amount, totalAmount, payment_method, payment_amount, changeAmount, notes, shiftId]);
 
     const sale = saleResult.rows[0];
 
