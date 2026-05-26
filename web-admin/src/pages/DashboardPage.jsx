@@ -1,20 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { reportAPI, stockAPI } from '../services/api';
+import { reportAPI, stockAPI, heldBillAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { TrendingUp, ShoppingCart, Package, AlertTriangle } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { TrendingUp, ShoppingCart, AlertTriangle, PauseCircle, Clock, User } from 'lucide-react';
 import { format } from 'date-fns';
 import { th } from 'date-fns/locale';
 
-function StatCard({ title, value, sub, icon: Icon, color }) {
+function StatCard({ title, value, sub, icon: Icon, color, badge }) {
   return (
     <div className="card flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
         <Icon size={22} className="text-white" />
       </div>
-      <div>
+      <div className="min-w-0">
         <p className="text-sm text-gray-500">{title}</p>
-        <p className="text-xl font-bold text-gray-900">{value}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xl font-bold text-gray-900">{value}</p>
+          {badge}
+        </div>
         {sub && <p className="text-xs text-gray-400">{sub}</p>}
       </div>
     </div>
@@ -26,6 +29,7 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState(null);
   const [daily, setDaily] = useState([]);
   const [lowStock, setLowStock] = useState([]);
+  const [heldSummary, setHeldSummary] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,10 +38,12 @@ export default function DashboardPage() {
       reportAPI.summary({ branch_id: user.branch_id, from_date: today, to_date: today }),
       reportAPI.daily({ branch_id: user.branch_id, days: 14 }),
       stockAPI.lowStock({ branch_id: user.branch_id }),
-    ]).then(([s, d, ls]) => {
+      heldBillAPI.summary({ branch_id: user.branch_id }),
+    ]).then(([s, d, ls, hs]) => {
       setSummary(s.summary);
       setDaily(d.reverse());
       setLowStock(ls);
+      setHeldSummary(hs);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -56,7 +62,15 @@ export default function DashboardPage() {
         <StatCard title="ยอดขายวันนี้" value={`฿${fmt(summary?.total_revenue)}`} icon={TrendingUp} color="bg-blue-500" />
         <StatCard title="กำไรขั้นต้น" value={`฿${fmt(summary?.gross_profit)}`} icon={TrendingUp} color="bg-green-500" />
         <StatCard title="จำนวนบิล" value={`${summary?.total_bills || 0} บิล`} icon={ShoppingCart} color="bg-purple-500" />
-        <StatCard title="สินค้าใกล้หมด" value={`${lowStock.length} รายการ`} icon={AlertTriangle} color="bg-orange-500" />
+        <StatCard
+          title="บิลที่ Hold ไว้"
+          value={`${heldSummary?.total || 0} บิล`}
+          icon={PauseCircle}
+          color={heldSummary?.total > 0 ? 'bg-yellow-500' : 'bg-gray-400'}
+          badge={heldSummary?.total > 0
+            ? <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full font-medium animate-pulse">รอเคลียร์</span>
+            : null}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -79,22 +93,50 @@ export default function DashboardPage() {
           </ResponsiveContainer>
         </div>
 
-        <div className="card">
-          <h2 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <AlertTriangle size={16} className="text-orange-500" />
-            สินค้าใกล้หมด ({lowStock.length})
-          </h2>
-          <div className="space-y-2 max-h-56 overflow-y-auto">
-            {lowStock.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-4">ไม่มีสินค้าใกล้หมด</p>
-            ) : lowStock.map(p => (
-              <div key={p.id} className="flex items-center justify-between text-sm">
-                <span className="text-gray-700 truncate flex-1">{p.name}</span>
-                <span className={`ml-2 font-semibold ${p.total_stock <= 0 ? 'text-red-600' : 'text-orange-500'}`}>
-                  {p.total_stock} {p.unit}
-                </span>
+        <div className="flex flex-col gap-4">
+          {/* Held bills breakdown */}
+          {heldSummary?.total > 0 && (
+            <div className="card border-l-4 border-l-yellow-400">
+              <h2 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <PauseCircle size={16} className="text-yellow-500" />
+                Hold บิล ({heldSummary.total} บิล)
+              </h2>
+              <div className="space-y-2">
+                {(heldSummary.by_user || []).map((u, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <User size={12} className="text-gray-400 flex-shrink-0" />
+                    <span className="text-gray-700 flex-1 truncate">{u.user_name || 'ไม่ระบุ'}</span>
+                    <span className="font-semibold text-yellow-600">{u.count} บิล</span>
+                  </div>
+                ))}
+                {heldSummary.by_user?.[0]?.earliest_expiry && (
+                  <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
+                    <Clock size={11} />
+                    บิลแรกหมดอายุ: {new Date(heldSummary.by_user[0].earliest_expiry).toLocaleString('th-TH')}
+                  </p>
+                )}
               </div>
-            ))}
+            </div>
+          )}
+
+          {/* Low stock */}
+          <div className="card flex-1">
+            <h2 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-orange-500" />
+              สินค้าใกล้หมด ({lowStock.length})
+            </h2>
+            <div className="space-y-2 max-h-44 overflow-y-auto">
+              {lowStock.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">ไม่มีสินค้าใกล้หมด</p>
+              ) : lowStock.map(p => (
+                <div key={p.id} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-700 truncate flex-1">{p.name}</span>
+                  <span className={`ml-2 font-semibold ${p.total_stock <= 0 ? 'text-red-600' : 'text-orange-500'}`}>
+                    {p.total_stock} {p.unit}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

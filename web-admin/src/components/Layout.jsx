@@ -3,17 +3,31 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, ShoppingCart, Package, Warehouse, BarChart3,
-  GitBranch, Users, History, Menu, X, LogOut, ChevronDown, Bell
+  GitBranch, Users, History, Menu, X, LogOut, ChevronDown, Bell,
+  FileInput, FileOutput, Layers, Handshake, TrendingUp,
+  RotateCcw, CreditCard, QrCode, Scale
 } from 'lucide-react';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { to: '/pos', label: 'หน้าขาย (POS)', icon: ShoppingCart },
+  { to: '/weigh', label: 'ชั่งน้ำหนัก', icon: Scale },
   { to: '/products', label: 'สินค้า', icon: Package },
   { to: '/stock', label: 'สต๊อก', icon: Warehouse },
   { to: '/stock/transactions', label: 'ความเคลื่อนไหวสต๊อก', icon: History },
+  { divider: true, label: 'ซื้อ-ขาย' },
+  { to: '/purchase-bills', label: 'บิลเข้า', icon: FileInput },
+  { to: '/delivery-bills', label: 'บิลออก (ค้าส่ง)', icon: FileOutput },
+  { to: '/partners', label: 'คู่ค้า', icon: Handshake },
+  { to: '/stock-returns', label: 'คืนสต๊อก', icon: RotateCcw },
+  { to: '/credit-history', label: 'ประวัติค้างจ่าย', icon: CreditCard },
+  { divider: true, label: 'วัตถุดิบ' },
+  { to: '/bulk-stock', label: 'สต๊อกใหญ่ & ซอย', icon: Layers },
+  { divider: true, label: 'รายงาน' },
   { to: '/sales', label: 'ประวัติการขาย', icon: History },
   { to: '/reports', label: 'รายงาน', icon: BarChart3 },
+  { divider: true, label: 'ระบบ' },
+  { to: '/bank-qr', label: 'QR รับเงิน', icon: QrCode },
   { to: '/branches', label: 'สาขา', icon: GitBranch, roles: ['admin'] },
   { to: '/users', label: 'ผู้ใช้งาน', icon: Users, roles: ['admin', 'manager'] },
 ];
@@ -25,7 +39,7 @@ export default function Layout() {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
-  const visibleNav = nav.filter(item => !item.roles || item.roles.includes(user?.role));
+  const visibleNav = nav.filter(item => item.divider || !item.roles || item.roles.includes(user?.role));
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -39,17 +53,25 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-2">
-          {visibleNav.map(({ to, label, icon: Icon, exact }) => (
-            <NavLink key={to} to={to} end={exact}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-                }`
-              }>
-              <Icon size={18} className="flex-shrink-0" />
-              {sidebarOpen && <span className="truncate">{label}</span>}
-            </NavLink>
-          ))}
+          {visibleNav.map((item, idx) => {
+            if (item.divider) return sidebarOpen ? (
+              <div key={idx} className="px-4 pt-3 pb-1">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{item.label}</p>
+              </div>
+            ) : <div key={idx} className="mx-3 my-1 border-t border-gray-700" />;
+            const { to, label, icon: Icon, exact } = item;
+            return (
+              <NavLink key={to} to={to} end={exact}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+                    isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                  }`
+                }>
+                <Icon size={18} className="flex-shrink-0" />
+                {sidebarOpen && <span className="truncate">{label}</span>}
+              </NavLink>
+            );
+          })}
         </nav>
 
         <div className="p-3 border-t border-gray-700">

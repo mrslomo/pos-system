@@ -13,6 +13,14 @@ import ReportsPage from './pages/ReportsPage';
 import BranchesPage from './pages/BranchesPage';
 import UsersPage from './pages/UsersPage';
 import SalesHistoryPage from './pages/SalesHistoryPage';
+import PartnersPage from './pages/PartnersPage';
+import PurchaseBillsPage from './pages/PurchaseBillsPage';
+import DeliveryBillsPage from './pages/DeliveryBillsPage';
+import BulkStockPage from './pages/BulkStockPage';
+import StockReturnPage from './pages/StockReturnPage';
+import CreditHistoryPage from './pages/CreditHistoryPage';
+import BankQRPage from './pages/BankQRPage';
+import WeighScalePage from './pages/WeighScalePage';
 
 function ProtectedRoute({ children, roles }) {
   const { user, loading } = useAuth();
@@ -37,6 +45,14 @@ function AppRoutes() {
         <Route path="reports" element={<ReportsPage />} />
         <Route path="branches" element={<ProtectedRoute roles={['admin']}><BranchesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin', 'manager']}><UsersPage /></ProtectedRoute>} />
+        <Route path="partners" element={<PartnersPage />} />
+        <Route path="purchase-bills" element={<PurchaseBillsPage />} />
+        <Route path="delivery-bills" element={<DeliveryBillsPage />} />
+        <Route path="bulk-stock" element={<BulkStockPage />} />
+        <Route path="stock-returns" element={<StockReturnPage />} />
+        <Route path="credit-history" element={<CreditHistoryPage />} />
+        <Route path="bank-qr" element={<BankQRPage />} />
+        <Route path="weigh" element={<WeighScalePage />} />
       </Route>
     </Routes>
   );

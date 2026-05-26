@@ -6,8 +6,8 @@ const cors = require('cors');
 const app = express();
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/products', require('./routes/products'));
@@ -17,6 +17,14 @@ app.use('/api/sales', require('./routes/sales'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/branches', require('./routes/branches'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/partners', require('./routes/partners'));
+app.use('/api/purchase-bills', require('./routes/purchase-bills'));
+app.use('/api/delivery-bills', require('./routes/delivery-bills'));
+app.use('/api/bulk-stock', require('./routes/bulk-stock'));
+app.use('/api/held-bills', require('./routes/held-bills'));
+app.use('/api/stock-returns', require('./routes/stock-returns'));
+app.use('/api/bank-accounts', require('./routes/bank-accounts'));
+app.use('/api/uploads', require('./routes/uploads'));
 
 // Scale weight endpoint (polling mode — no WebSocket on Functions)
 app.get('/api/scale/weight', (req, res) => {

@@ -90,4 +90,66 @@ export const scaleAPI = {
   weight: () => api.get('/scale/weight'),
 };
 
+export const partnerAPI = {
+  list: (params) => api.get('/partners', { params }),
+  get: (id) => api.get(`/partners/${id}`),
+  create: (data) => api.post('/partners', data),
+  update: (id, data) => api.put(`/partners/${id}`, data),
+  addPrice: (id, data) => api.post(`/partners/${id}/prices`, data),
+  removePrice: (id, product_id) => api.delete(`/partners/${id}/prices/${product_id}`),
+  getPrice: (id, product_id) => api.get(`/partners/${id}/price/${product_id}`),
+};
+
+export const purchaseBillAPI = {
+  list: (params) => api.get('/purchase-bills', { params }),
+  get: (id) => api.get(`/purchase-bills/${id}`),
+  create: (data) => api.post('/purchase-bills', data),
+  cancel: (id) => api.delete(`/purchase-bills/${id}`),
+};
+
+export const deliveryBillAPI = {
+  list: (params) => api.get('/delivery-bills', { params }),
+  get: (id) => api.get(`/delivery-bills/${id}`),
+  create: (data) => api.post('/delivery-bills', data),
+  updatePayment: (id, status, paid_amount) => api.patch(`/delivery-bills/${id}/payment`, { payment_status: status, paid_amount }),
+};
+
+export const heldBillAPI = {
+  list: (params) => api.get('/held-bills', { params }),
+  summary: (params) => api.get('/held-bills/summary', { params }),
+  hold: (data) => api.post('/held-bills', data),
+  recall: (id) => api.delete(`/held-bills/${id}/recall`),
+  cancel: (id) => api.delete(`/held-bills/${id}`),
+};
+
+export const stockReturnAPI = {
+  list: (params) => api.get('/stock-returns', { params }),
+  get: (id) => api.get(`/stock-returns/${id}`),
+  create: (data) => api.post('/stock-returns', data),
+};
+
+export const bankAccountAPI = {
+  list: (params) => api.get('/bank-accounts', { params }),
+  create: (data) => api.post('/bank-accounts', data),
+  update: (id, data) => api.put(`/bank-accounts/${id}`, data),
+  delete: (id) => api.delete(`/bank-accounts/${id}`),
+};
+
+export const bulkStockAPI = {
+  items: (params) => api.get('/bulk-stock/items', { params }),
+  createItem: (data) => api.post('/bulk-stock/items', data),
+  updateItem: (id, data) => api.put(`/bulk-stock/items/${id}`, data),
+  history: (id) => api.get(`/bulk-stock/items/${id}/history`),
+  stockIn: (data) => api.post('/bulk-stock/stock-in', data),
+  processingList: (params) => api.get('/bulk-stock/processing', { params }),
+  processingGet: (id) => api.get(`/bulk-stock/processing/${id}`),
+  processingCreate: (data) => api.post('/bulk-stock/processing', data),
+  costAnalysis: (params) => api.get('/bulk-stock/cost-analysis', { params }),
+};
+
+export const uploadAPI = {
+  // accepts base64 string (data:image/...), returns { url, public_id }
+  upload: (base64) => api.post('/uploads', { image: base64 }),
+};
+
 export default api;
