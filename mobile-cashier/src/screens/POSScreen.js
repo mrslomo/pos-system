@@ -8,6 +8,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { productAPI, salesAPI, heldBillAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useShift } from '../context/ShiftContext';
+import QRPaymentModal from '../components/QRPaymentModal';
 
 const PAY_METHODS = [
   { key: 'cash', label: 'เงินสด' },
@@ -33,6 +34,7 @@ export default function POSScreen() {
   const [holdModal, setHoldModal] = useState(false);
   const [heldBills, setHeldBills] = useState([]);
   const [closeShiftModal, setCloseShiftModal] = useState(false);
+  const [qrModal, setQrModal] = useState(false);
   const [actualCash, setActualCash] = useState('');
   const [closingShift, setClosingShift] = useState(false);
   const [shiftSummary, setShiftSummary] = useState(null);
@@ -292,12 +294,18 @@ export default function POSScreen() {
 
       <TouchableOpacity
         style={[s.checkoutBtn, (cart.length === 0 || submitting) && { opacity: 0.5 }]}
-        onPress={handleCheckout}
+        onPress={() => {
+          if (cart.length === 0) return;
+          if (payment === 'promptpay') setQrModal(true);
+          else handleCheckout();
+        }}
         disabled={cart.length === 0 || submitting}
       >
         {submitting
           ? <ActivityIndicator color="#fff" />
-          : <Text style={s.checkoutTxt}>ชำระเงิน ฿{fmt(total)}</Text>
+          : <Text style={s.checkoutTxt}>
+              {payment === 'promptpay' ? '🔲 แสดง QR' : 'ชำระเงิน'} ฿{fmt(total)}
+            </Text>
         }
       </TouchableOpacity>
     </View>
@@ -426,6 +434,14 @@ export default function POSScreen() {
         {/* RIGHT PANEL */}
         <RightPanel />
       </View>
+
+      {/* PromptPay QR Modal */}
+      <QRPaymentModal
+        visible={qrModal}
+        amount={total}
+        onConfirm={() => { setQrModal(false); handleCheckout(); }}
+        onCancel={() => setQrModal(false)}
+      />
 
       {/* Close Shift Modal */}
       <Modal visible={closeShiftModal} animationType="fade" transparent>

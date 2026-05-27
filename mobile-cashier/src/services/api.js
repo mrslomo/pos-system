@@ -36,6 +36,10 @@ export const heldBillAPI = {
   recall: (id) => api.delete(`/held-bills/${id}/recall`),
 };
 
+export const bankAccountAPI = {
+  list: (params) => api.get('/bank-accounts', { params }),
+};
+
 export const shiftsAPI = {
   current: (branch_id) => api.get('/shifts/current', { params: { branch_id } }),
   open: (data) => api.post('/shifts', data),
