@@ -1,134 +1,206 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Modal,
-  ActivityIndicator, Dimensions,
+  View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator,
 } from 'react-native';
-import QRCode from 'react-native-qrcode-svg';
+import * as Print from 'expo-print';
 import * as Speech from 'expo-speech';
 import generatePayload from 'promptpay-qr';
 import { bankAccountAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-const { width: SW, height: SH } = Dimensions.get('window');
-const QR_SIZE = Math.min(SW, SH) * 0.38;
+// Generate QR as Data URL using Google Charts API (no native dependency)
+function qrUrl(data, size = 300) {
+  const encoded = encodeURIComponent(data);
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encoded}&ecc=M&margin=10`;
+}
+
+function buildReceiptHtml({ amount, promptpayId, accountName, branchName, qrData }) {
+  const fmtTh = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+  const timeStr = new Date().toLocaleString('th-TH', {
+    day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+  const qrSrc = qrUrl(qrData, 320);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Sarabun', Arial, sans-serif; background: #fff; }
+  .page { width: 80mm; margin: 0 auto; padding: 6mm 4mm; }
+  .center { text-align: center; }
+  .shop { font-size: 16pt; font-weight: bold; margin-bottom: 2mm; }
+  .branch { font-size: 10pt; color: #444; margin-bottom: 1mm; }
+  .time { font-size: 9pt; color: #888; margin-bottom: 4mm; }
+  .divider { border-top: 1px dashed #bbb; margin: 3mm 0; }
+  .label { font-size: 10pt; color: #555; margin-bottom: 1mm; }
+  .amount { font-size: 30pt; font-weight: bold; color: #1e3a5f; margin: 2mm 0; }
+  .baht { font-size: 13pt; color: #64748b; margin-bottom: 4mm; }
+  .qr-wrap { display: flex; justify-content: center; margin: 3mm 0; }
+  .qr-wrap img { width: 65mm; height: 65mm; }
+  .pp-id { font-size: 9pt; color: #475569; margin-top: 2mm; }
+  .pp-name { font-size: 11pt; font-weight: bold; color: #1e293b; }
+  .footer { font-size: 8pt; color: #999; margin-top: 4mm; }
+  .pp-badge { display: inline-block; background: #1d4ed8; color: #fff; font-size: 9pt; font-weight: bold; padding: 1mm 3mm; border-radius: 2mm; margin: 2mm 0; }
+</style>
+</head>
+<body>
+<div class="page center">
+  <div class="shop">${branchName || 'ร้านค้า'}</div>
+  <div class="time">${timeStr}</div>
+  <div class="divider"></div>
+  <div class="label">ยอดที่ต้องชำระ</div>
+  <div class="amount">${fmtTh(amount)}</div>
+  <div class="baht">บาท</div>
+  <div class="divider"></div>
+  <div class="label">สแกนเพื่อชำระเงิน</div>
+  <div class="pp-badge">🇹🇭 PromptPay / พร้อมเพย์</div>
+  <div class="qr-wrap">
+    <img src="${qrSrc}" />
+  </div>
+  <div class="pp-name">${accountName || ''}</div>
+  ${promptpayId ? `<div class="pp-id">${promptpayId}</div>` : ''}
+  <div class="divider"></div>
+  <div class="footer">กรุณาตรวจสอบยอดก่อนชำระ<br>Please verify amount before payment</div>
+</div>
+</body>
+</html>`;
+}
 
 export default function QRPaymentModal({ visible, amount, onConfirm, onCancel }) {
   const { user } = useAuth();
-  const [promptpayId, setPromptpayId] = useState(null);
-  const [accountName, setAccountName] = useState('');
-  const [qrValue, setQrValue] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [printed, setPrinted] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [accountInfo, setAccountInfo] = useState(null);
 
   const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 
-  const loadPromptpay = useCallback(async () => {
+  const loadAndPrint = useCallback(async () => {
     setLoading(true);
+    setPrinted(false);
     setConfirmed(false);
     try {
       const accounts = await bankAccountAPI.list({ branch_id: user.branch_id });
       const pp = (accounts || []).find(a =>
-        a.account_type === 'promptpay' || a.bank_name?.toLowerCase().includes('promptpay') ||
+        a.account_type === 'promptpay' ||
+        a.bank_name?.toLowerCase().includes('promptpay') ||
         a.bank_name?.toLowerCase().includes('พร้อมเพย์')
       );
+      setAccountInfo(pp || null);
       if (pp) {
         const id = pp.account_number?.replace(/\D/g, '');
-        setPromptpayId(id);
-        setAccountName(pp.account_name || pp.bank_name || 'พร้อมเพย์');
-        const payload = generatePayload(id, { amount: parseFloat(amount) });
-        setQrValue(payload);
-      } else {
-        setPromptpayId(null);
-        setQrValue('');
+        const qrData = generatePayload(id, { amount: parseFloat(amount) });
+        await doPrint(qrData, id, pp.account_name || pp.bank_name, user.branch_name);
       }
-    } catch {
-      setPromptpayId(null);
-      setQrValue('');
+    } catch (e) {
+      console.warn('print error', e);
     } finally {
       setLoading(false);
     }
-  }, [user.branch_id, amount]);
+  }, [user.branch_id, user.branch_name, amount]);
+
+  const doPrint = async (qrData, promptpayId, accountName, branchName) => {
+    setPrinting(true);
+    try {
+      const html = buildReceiptHtml({ amount, promptpayId, accountName, branchName, qrData });
+      await Print.printAsync({ html });
+      setPrinted(true);
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const handleReprint = async () => {
+    if (!accountInfo) return;
+    const id = accountInfo.account_number?.replace(/\D/g, '');
+    const qrData = generatePayload(id, { amount: parseFloat(amount) });
+    await doPrint(qrData, id, accountInfo.account_name || accountInfo.bank_name, user.branch_name);
+  };
 
   useEffect(() => {
-    if (visible) loadPromptpay();
-    else { Speech.stop(); setConfirmed(false); }
+    if (visible) loadAndPrint();
+    else Speech.stop();
   }, [visible, amount]);
 
   const handleConfirm = () => {
     setConfirmed(true);
     const amountText = Number(amount).toLocaleString('th-TH', { minimumFractionDigits: 2 });
     Speech.speak(`ได้รับเงินแล้ว จำนวน ${amountText} บาท`, {
-      language: 'th-TH',
-      rate: 0.9,
-      pitch: 1.0,
+      language: 'th-TH', rate: 0.9, pitch: 1.0,
     });
-    setTimeout(() => onConfirm(), 400);
+    setTimeout(() => onConfirm(), 600);
   };
 
   return (
-    <Modal visible={visible} animationType="fade" statusBarTranslucent>
-      <View style={s.root}>
-        {/* Left: QR */}
-        <View style={s.qrPanel}>
-          <Text style={s.scanLabel}>สแกนเพื่อชำระเงิน</Text>
-          <Text style={s.scanSub}>Scan to Pay</Text>
+    <Modal visible={visible} animationType="fade" transparent>
+      <View style={s.overlay}>
+        <View style={s.card}>
+          {/* Header */}
+          <View style={s.header}>
+            <Text style={s.title}>🔲 ชำระผ่านพร้อมเพย์</Text>
+            <TouchableOpacity onPress={onCancel} style={s.closeBtn}>
+              <Text style={s.closeTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
 
-          {loading ? (
-            <View style={s.qrBox}>
-              <ActivityIndicator size="large" color="#3b82f6" />
-            </View>
-          ) : !qrValue ? (
-            <View style={s.qrBox}>
-              <Text style={{ fontSize: 48 }}>⚠️</Text>
-              <Text style={s.noQrTxt}>ไม่พบบัญชีพร้อมเพย์{'\n'}กรุณาตั้งค่าที่ QR รับเงิน</Text>
-            </View>
-          ) : (
-            <View style={s.qrBox}>
-              <View style={s.qrFrame}>
-                <QRCode value={qrValue} size={QR_SIZE} backgroundColor="white" color="#1e3a5f" />
-              </View>
-              {accountName ? <Text style={s.accountName}>{accountName}</Text> : null}
-              <View style={s.ppBadge}>
-                <Text style={s.ppBadgeTxt}>🇹🇭 PromptPay</Text>
-              </View>
-            </View>
-          )}
-        </View>
-
-        {/* Right: amount + actions */}
-        <View style={s.rightPanel}>
+          {/* Amount */}
           <View style={s.amountBox}>
             <Text style={s.amountLabel}>ยอดที่ต้องชำระ</Text>
-            <Text style={s.amountValue}>฿{fmt(amount)}</Text>
+            <Text style={s.amountVal}>฿{fmt(amount)}</Text>
           </View>
 
-          <View style={s.steps}>
-            {[
-              { n: '1', txt: 'เปิด App ธนาคาร' },
-              { n: '2', txt: 'สแกน QR Code' },
-              { n: '3', txt: 'ยืนยันจำนวนเงิน' },
-            ].map(step => (
-              <View key={step.n} style={s.step}>
-                <View style={s.stepNum}><Text style={s.stepNumTxt}>{step.n}</Text></View>
-                <Text style={s.stepTxt}>{step.txt}</Text>
+          {/* Status */}
+          <View style={s.statusBox}>
+            {loading || printing ? (
+              <View style={s.statusRow}>
+                <ActivityIndicator color="#3b82f6" />
+                <Text style={s.statusTxt}>
+                  {loading ? 'กำลังเตรียมข้อมูล...' : 'กำลังส่งไปพิมพ์...'}
+                </Text>
               </View>
-            ))}
+            ) : !accountInfo ? (
+              <View style={s.statusRow}>
+                <Text style={{ fontSize: 20 }}>⚠️</Text>
+                <Text style={[s.statusTxt, { color: '#ef4444' }]}>
+                  ไม่พบบัญชีพร้อมเพย์{'\n'}ตั้งค่าได้ที่เมนู QR รับเงิน (หลังบ้าน)
+                </Text>
+              </View>
+            ) : printed ? (
+              <View style={s.statusRow}>
+                <Text style={{ fontSize: 20 }}>✅</Text>
+                <Text style={[s.statusTxt, { color: '#10b981' }]}>พิมพ์ QR เรียบร้อยแล้ว</Text>
+              </View>
+            ) : null}
           </View>
 
-          {confirmed ? (
-            <View style={s.confirmedBox}>
-              <Text style={{ fontSize: 48 }}>✅</Text>
-              <Text style={s.confirmedTxt}>รับเงินแล้ว!</Text>
-            </View>
-          ) : (
-            <>
-              <TouchableOpacity style={s.confirmBtn} onPress={handleConfirm}>
-                <Text style={s.confirmBtnTxt}>✓ ยืนยันรับเงินแล้ว</Text>
-              </TouchableOpacity>
+          {/* Actions */}
+          {!loading && !printing && (
+            <View style={s.actions}>
+              {accountInfo && (
+                <TouchableOpacity style={s.reprintBtn} onPress={handleReprint} disabled={printing}>
+                  <Text style={s.reprintTxt}>🖨 พิมพ์ใหม่</Text>
+                </TouchableOpacity>
+              )}
+              {confirmed ? (
+                <View style={s.confirmedBox}>
+                  <Text style={s.confirmedTxt}>✅ รับเงินแล้ว!</Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[s.confirmBtn, !printed && !accountInfo && { opacity: 0.5 }]}
+                  onPress={handleConfirm}
+                >
+                  <Text style={s.confirmTxt}>✓ ยืนยันรับเงินแล้ว</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity style={s.cancelBtn} onPress={onCancel}>
-                <Text style={s.cancelBtnTxt}>← ย้อนกลับ</Text>
+                <Text style={s.cancelTxt}>← ย้อนกลับ</Text>
               </TouchableOpacity>
-            </>
+            </View>
           )}
         </View>
       </View>
@@ -137,57 +209,25 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
 }
 
 const s = StyleSheet.create({
-  root: {
-    flex: 1, flexDirection: 'row', backgroundColor: '#0f172a',
-  },
-
-  // Left QR panel
-  qrPanel: {
-    flex: 1, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: '#0f172a', padding: 24,
-  },
-  scanLabel: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
-  scanSub: { fontSize: 15, color: '#64748b', marginBottom: 28 },
-  qrBox: { alignItems: 'center', justifyContent: 'center', gap: 16 },
-  qrFrame: {
-    padding: 16, backgroundColor: '#fff', borderRadius: 20,
-    shadowColor: '#3b82f6', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 20,
-    elevation: 20,
-  },
-  accountName: { color: '#93c5fd', fontSize: 14, marginTop: 4, fontWeight: '500' },
-  ppBadge: { backgroundColor: '#1d4ed8', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20 },
-  ppBadgeTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  noQrTxt: { color: '#94a3b8', textAlign: 'center', fontSize: 14, marginTop: 12, lineHeight: 22 },
-
-  // Right panel
-  rightPanel: {
-    width: 320, backgroundColor: '#1e293b',
-    justifyContent: 'center', padding: 28, gap: 20,
-  },
-  amountBox: {
-    backgroundColor: '#0f172a', borderRadius: 20, padding: 24, alignItems: 'center',
-    borderWidth: 1, borderColor: '#334155',
-  },
-  amountLabel: { fontSize: 14, color: '#64748b', marginBottom: 8 },
-  amountValue: { fontSize: 40, fontWeight: 'bold', color: '#fff', fontVariant: ['tabular-nums'] },
-
-  steps: { gap: 14 },
-  step: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  stepNum: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#3b82f6', justifyContent: 'center', alignItems: 'center' },
-  stepNumTxt: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
-  stepTxt: { color: '#cbd5e1', fontSize: 14 },
-
-  confirmBtn: {
-    height: 58, backgroundColor: '#10b981', borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  confirmBtnTxt: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
-  cancelBtn: {
-    height: 46, borderRadius: 12, borderWidth: 1, borderColor: '#334155',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  cancelBtnTxt: { color: '#64748b', fontSize: 14 },
-
-  confirmedBox: { alignItems: 'center', gap: 12, paddingVertical: 16 },
-  confirmedTxt: { fontSize: 26, fontWeight: 'bold', color: '#10b981' },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
+  card: { backgroundColor: '#fff', borderRadius: 20, padding: 24, width: 380, elevation: 20 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  title: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
+  closeBtn: { padding: 4 },
+  closeTxt: { fontSize: 18, color: '#94a3b8' },
+  amountBox: { backgroundColor: '#eff6ff', borderRadius: 14, padding: 18, alignItems: 'center', marginBottom: 16 },
+  amountLabel: { fontSize: 13, color: '#64748b', marginBottom: 4 },
+  amountVal: { fontSize: 36, fontWeight: 'bold', color: '#1e3a5f', fontVariant: ['tabular-nums'] },
+  statusBox: { minHeight: 48, justifyContent: 'center', marginBottom: 12 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f8fafc', borderRadius: 10, padding: 12 },
+  statusTxt: { fontSize: 14, color: '#475569', flex: 1 },
+  actions: { gap: 10 },
+  reprintBtn: { height: 44, borderRadius: 12, borderWidth: 1.5, borderColor: '#3b82f6', justifyContent: 'center', alignItems: 'center' },
+  reprintTxt: { color: '#3b82f6', fontWeight: '600', fontSize: 15 },
+  confirmBtn: { height: 52, backgroundColor: '#10b981', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  confirmTxt: { color: '#fff', fontWeight: 'bold', fontSize: 17 },
+  cancelBtn: { height: 42, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  cancelTxt: { color: '#94a3b8', fontSize: 14 },
+  confirmedBox: { height: 52, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0fdf4', borderRadius: 14 },
+  confirmedTxt: { fontSize: 18, fontWeight: 'bold', color: '#10b981' },
 });

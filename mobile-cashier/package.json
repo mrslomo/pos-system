@@ -11,6 +11,8 @@
     "axios": "^1.16.1",
     "expo": "~56.0.4",
     "expo-camera": "~56.0.7",
+    "expo-print": "^56.0.3",
+    "expo-sharing": "^56.0.14",
     "expo-speech": "^56.0.3",
     "expo-status-bar": "~56.0.4",
     "promptpay-qr": "^0.5.0",
