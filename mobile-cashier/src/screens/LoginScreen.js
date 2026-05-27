@@ -7,18 +7,18 @@ import { useAuth } from '../context/AuthContext';
 
 export default function LoginScreen() {
   const { login } = useAuth();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!username || !password) {
-      Alert.alert('กรุณากรอกข้อมูล', 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
+    if (!email || !password) {
+      Alert.alert('กรุณากรอกข้อมูล', 'กรุณากรอกอีเมลและรหัสผ่าน');
       return;
     }
     setLoading(true);
     try {
-      await login(username.trim(), password);
+      await login(email.trim().toLowerCase(), password);
     } catch (err) {
       Alert.alert('เข้าสู่ระบบไม่สำเร็จ', err?.message || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
     } finally {
@@ -37,11 +37,12 @@ export default function LoginScreen() {
 
         <TextInput
           style={s.input}
-          placeholder="ชื่อผู้ใช้"
-          value={username}
-          onChangeText={setUsername}
+          placeholder="อีเมล (email)"
+          value={email}
+          onChangeText={setEmail}
           autoCapitalize="none"
           autoCorrect={false}
+          keyboardType="email-address"
           returnKeyType="next"
         />
         <TextInput

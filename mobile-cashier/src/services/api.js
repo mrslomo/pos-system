@@ -36,6 +36,12 @@ export const heldBillAPI = {
   recall: (id) => api.delete(`/held-bills/${id}/recall`),
 };
 
+export const shiftsAPI = {
+  current: (branch_id) => api.get('/shifts/current', { params: { branch_id } }),
+  open: (data) => api.post('/shifts', data),
+  close: (id, data) => api.post(`/shifts/${id}/close`, data),
+};
+
 export const scaleAPI = {
   ports: () => api.get('/scale/ports'),
   connect: (data) => api.post('/scale/connect', data),

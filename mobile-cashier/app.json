@@ -3,7 +3,7 @@
     "name": "POS Cashier",
     "slug": "mobile-cashier",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
@@ -26,7 +26,7 @@
     },
     "plugins": [
       [
-        "expo-barcode-scanner",
+        "expo-camera",
         {
           "cameraPermission": "ใช้กล้องสแกนบาร์โค้ดสินค้า"
         }

@@ -1,43 +1,51 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
-  Alert, Modal, ActivityIndicator, ScrollView, KeyboardAvoidingView,
-  Platform, Image,
+  Alert, Modal, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { BarCodeScanner } from 'expo-barcode-scanner';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { productAPI, salesAPI, heldBillAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useShift } from '../context/ShiftContext';
 
-const PAYMENT = ['cash', 'transfer', 'credit'];
-const PAY_LABEL = { cash: 'เงินสด', transfer: 'โอน', credit: 'เครดิต' };
+const PAY_METHODS = [
+  { key: 'cash', label: 'เงินสด' },
+  { key: 'transfer', label: 'บัตร' },
+  { key: 'promptpay', label: 'พร้อมเพย์' },
+];
+
+const SHIFT_LABEL = { morning: 'เช้า 🌅', afternoon: 'บ่าย ☀️', night: 'ดึก 🌙', fullday: 'เต็มวัน 📅' };
 
 export default function POSScreen() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const { shift, closeShift, refreshShift } = useShift();
+
   const [search, setSearch] = useState('');
   const [results, setResults] = useState([]);
   const [cart, setCart] = useState([]);
-  const [discount, setDiscount] = useState('');
-  const [scanning, setScanning] = useState(false);
-  const [camPerm, setCamPerm] = useState(null);
+  const [discount, setDiscount] = useState('0');
   const [payment, setPayment] = useState('cash');
   const [cashInput, setCashInput] = useState('');
-  const [checkoutModal, setCheckoutModal] = useState(false);
-  const [holdModal, setHoldModal] = useState(false);
-  const [heldBills, setHeldBills] = useState([]);
+  const [scanning, setScanning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [holdModal, setHoldModal] = useState(false);
+  const [heldBills, setHeldBills] = useState([]);
+  const [closeShiftModal, setCloseShiftModal] = useState(false);
+  const [actualCash, setActualCash] = useState('');
+  const [closingShift, setClosingShift] = useState(false);
+  const [shiftSummary, setShiftSummary] = useState(null);
+  const [camPermission, requestCamPermission] = useCameraPermissions();
   const debounce = useRef(null);
 
-  useEffect(() => {
-    BarCodeScanner.requestPermissionsAsync().then(({ status }) => setCamPerm(status === 'granted'));
-  }, []);
+  const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 
   const searchProducts = useCallback(async (q) => {
     if (!q || q.length < 1) { setResults([]); return; }
     setSearchLoading(true);
     try {
-      const res = await productAPI.search({ q, branch_id: user.branch_id, limit: 15 });
+      const res = await productAPI.search({ q, branch_id: user.branch_id, limit: 20 });
       setResults(res.products || res || []);
     } catch { setResults([]); }
     finally { setSearchLoading(false); }
@@ -62,18 +70,18 @@ export default function POSScreen() {
 
   const addToCart = (product) => {
     setCart(prev => {
-      const existing = prev.findIndex(i => i.id === product.id);
-      if (existing >= 0) {
-        const updated = [...prev];
-        updated[existing] = { ...updated[existing], qty: updated[existing].qty + 1 };
-        return updated;
+      const i = prev.findIndex(x => x.id === product.id);
+      if (i >= 0) {
+        const u = [...prev];
+        u[i] = { ...u[i], qty: u[i].qty + 1 };
+        return u;
       }
       return [...prev, {
         id: product.id,
         name: product.name,
         price: Number(product.selling_price || product.price || 0),
         cost: Number(product.cost_price || 0),
-        barcode: product.barcode,
+        barcode: product.barcode || '',
         image_url: product.image_url || null,
         unit: product.unit || '',
         qty: 1,
@@ -87,27 +95,18 @@ export default function POSScreen() {
     setCart(prev => prev.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty + delta) } : i).filter(i => i.qty > 0));
   };
 
-  const removeItem = (id) => setCart(prev => prev.filter(i => i.id !== id));
-
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
   const discountAmt = Math.min(subtotal, Math.max(0, parseFloat(discount) || 0));
   const total = subtotal - discountAmt;
   const change = Math.max(0, (parseFloat(cashInput) || 0) - total);
 
   const handleCheckout = async () => {
-    if (cart.length === 0) return;
+    if (cart.length === 0) { Alert.alert('ตะกร้าว่าง', 'กรุณาเพิ่มสินค้าก่อน'); return; }
     setSubmitting(true);
     try {
-      const items = cart.map(i => ({
-        product_id: i.id,
-        quantity: i.qty,
-        unit_price: i.price,
-        cost_price: i.cost,
-        subtotal: i.price * i.qty,
-      }));
       await salesAPI.create({
         branch_id: user.branch_id,
-        items,
+        items: cart.map(i => ({ product_id: i.id, quantity: i.qty, unit_price: i.price, cost_price: i.cost, subtotal: i.price * i.qty })),
         subtotal,
         discount_amount: discountAmt,
         total_amount: total,
@@ -115,15 +114,47 @@ export default function POSScreen() {
         payment_amount: payment === 'cash' ? (parseFloat(cashInput) || total) : total,
       });
       setCart([]);
-      setDiscount('');
+      setDiscount('0');
       setCashInput('');
-      setCheckoutModal(false);
-      Alert.alert('สำเร็จ', 'บันทึกการขายเรียบร้อย ✓');
+      Alert.alert('✓ สำเร็จ', 'บันทึกการขายเรียบร้อย');
     } catch (err) {
       Alert.alert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถบันทึกการขายได้');
+    } finally { setSubmitting(false); }
+  };
+
+  const openCloseShift = async () => {
+    try {
+      const current = await refreshShift(user.branch_id, user.id);
+      setShiftSummary(current);
+      setActualCash('');
+      setCloseShiftModal(true);
+    } catch { setCloseShiftModal(true); }
+  };
+
+  const handleCloseShift = async () => {
+    if (!actualCash) { Alert.alert('กรุณาใส่ยอดเงินจริง'); return; }
+    setClosingShift(true);
+    try {
+      await closeShift(shift.id, parseFloat(actualCash));
+    } catch (err) {
+      Alert.alert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถปิดกะได้');
     } finally {
-      setSubmitting(false);
+      setClosingShift(false);
+      setCloseShiftModal(false);
     }
+  };
+
+  const holdCurrentCart = async () => {
+    if (cart.length === 0) return;
+    try {
+      await heldBillAPI.hold({
+        branch_id: user.branch_id,
+        items: cart.map(i => ({ product_id: i.id, product_name: i.name, quantity: i.qty, unit_price: i.price, cost_price: i.cost, subtotal: i.price * i.qty })),
+        subtotal, discount_amount: discountAmt, total_amount: total,
+      });
+      setCart([]);
+      Alert.alert('Hold บิล', 'บันทึก Hold บิลเรียบร้อย');
+    } catch (err) { Alert.alert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถ Hold บิลได้'); }
   };
 
   const loadHeldBills = async () => {
@@ -133,49 +164,28 @@ export default function POSScreen() {
     } catch { setHeldBills([]); }
   };
 
-  const holdCurrentCart = async () => {
-    if (cart.length === 0) return;
-    try {
-      await heldBillAPI.hold({
-        branch_id: user.branch_id,
-        items: cart.map(i => ({ product_id: i.id, product_name: i.name, quantity: i.qty, unit_price: i.price, cost_price: i.cost, subtotal: i.price * i.qty })),
-        subtotal,
-        discount_amount: discountAmt,
-        total_amount: total,
-      });
-      setCart([]);
-      Alert.alert('Hold บิล', 'บันทึก Hold บิลเรียบร้อย');
-    } catch (err) {
-      Alert.alert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถ Hold บิลได้');
-    }
-  };
-
   const recallBill = async (bill) => {
     try {
       const recalled = await heldBillAPI.recall(bill.id);
       const items = (recalled?.items || bill.items || []).map(i => ({
-        id: i.product_id,
-        name: i.product_name,
-        price: Number(i.unit_price),
-        cost: Number(i.cost_price || 0),
-        barcode: i.barcode || '',
-        unit: i.unit || '',
-        qty: Number(i.quantity),
+        id: i.product_id, name: i.product_name,
+        price: Number(i.unit_price), cost: Number(i.cost_price || 0),
+        unit: i.unit || '', qty: Number(i.quantity),
       }));
       setCart(items);
-      setDiscount(String(recalled?.discount_amount || bill.discount_amount || ''));
+      setDiscount(String(recalled?.discount_amount || bill.discount_amount || '0'));
       setHoldModal(false);
-    } catch (err) {
-      Alert.alert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถเรียกบิลได้');
-    }
+    } catch (err) { Alert.alert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถเรียกบิลได้'); }
   };
-
-  const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 
   if (scanning) {
     return (
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <BarCodeScanner style={{ flex: 1 }} onBarCodeScanned={handleBarcode} />
+        <CameraView
+          style={{ flex: 1 }} facing="back"
+          onBarcodeScanned={handleBarcode}
+          barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'code128', 'code39', 'qr', 'upc_a', 'upc_e'] }}
+        />
         <TouchableOpacity style={s.cancelScan} onPress={() => setScanning(false)}>
           <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>✕ ยกเลิก</Text>
         </TouchableOpacity>
@@ -183,187 +193,326 @@ export default function POSScreen() {
     );
   }
 
-  return (
-    <SafeAreaView style={s.root} edges={['top']}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        {/* Header */}
-        <View style={s.header}>
-          <Text style={s.headerTitle}>หน้าขาย</Text>
-          <View style={s.headerRight}>
-            <TouchableOpacity style={s.holdBtn} onPress={() => { loadHeldBills(); setHoldModal(true); }}>
-              <Text style={s.holdBtnText}>Hold 📋</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+  // ---- RIGHT PANEL (summary + payment) ----
+  const RightPanel = () => (
+    <View style={s.rightPanel}>
+      <Text style={s.panelTitle}>สรุปยอด</Text>
 
-        {/* Search bar */}
-        <View style={s.searchRow}>
-          <TextInput
-            style={s.searchInput}
-            placeholder="ค้นหาสินค้า / บาร์โค้ด..."
-            value={search}
-            onChangeText={handleSearchChange}
-            returnKeyType="search"
-            onSubmitEditing={() => searchProducts(search)}
-          />
-          <TouchableOpacity style={s.scanBtn} onPress={() => camPerm ? setScanning(true) : Alert.alert('ไม่มีสิทธิ์', 'กรุณาอนุญาตการใช้กล้อง')}>
-            <Text style={{ fontSize: 22 }}>📷</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Search results dropdown */}
-        {(results.length > 0 || searchLoading) && (
-          <View style={s.resultsBox}>
-            {searchLoading ? (
-              <ActivityIndicator style={{ padding: 12 }} color="#3b82f6" />
-            ) : (
-              <FlatList
-                data={results}
-                keyExtractor={i => String(i.id)}
-                style={{ maxHeight: 220 }}
-                keyboardShouldPersistTaps="always"
-                renderItem={({ item }) => (
-                  <TouchableOpacity style={s.resultItem} onPress={() => addToCart(item)}>
-                    {item.image_url ? (
-                      <Image source={{ uri: item.image_url }} style={s.resultImg} />
-                    ) : (
-                      <View style={[s.resultImg, { backgroundColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center' }]}>
-                        <Text style={{ fontSize: 18 }}>📦</Text>
-                      </View>
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.resultName} numberOfLines={1}>{item.name}</Text>
-                      <Text style={s.resultBarcode}>{item.barcode}</Text>
-                    </View>
-                    <Text style={s.resultPrice}>฿{fmt(item.selling_price || item.price)}</Text>
-                  </TouchableOpacity>
-                )}
-              />
-            )}
+      {/* Cart items mini list */}
+      <FlatList
+        data={cart}
+        keyExtractor={i => String(i.id)}
+        style={s.miniCart}
+        ListEmptyComponent={<Text style={s.emptyMini}>ยังไม่มีรายการ</Text>}
+        renderItem={({ item }) => (
+          <View style={s.miniItem}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.miniName} numberOfLines={1}>{item.name}</Text>
+              <Text style={s.miniSub}>฿{fmt(item.price)} × {item.qty}</Text>
+            </View>
+            <View style={s.miniQty}>
+              <TouchableOpacity onPress={() => updateQty(item.id, -1)} style={s.qBtn}>
+                <Text style={s.qBtnTxt}>−</Text>
+              </TouchableOpacity>
+              <Text style={s.qNum}>{item.qty}</Text>
+              <TouchableOpacity onPress={() => updateQty(item.id, 1)} style={s.qBtn}>
+                <Text style={s.qBtnTxt}>+</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={s.miniTotal}>฿{fmt(item.price * item.qty)}</Text>
           </View>
         )}
+      />
 
-        {/* Cart */}
-        <FlatList
-          data={cart}
-          keyExtractor={i => String(i.id)}
-          style={s.cart}
-          ListEmptyComponent={
-            <View style={s.emptyCart}>
-              <Text style={{ fontSize: 40 }}>🛒</Text>
-              <Text style={s.emptyText}>ยังไม่มีสินค้าในตะกร้า</Text>
-              <Text style={s.emptyHint}>ค้นหาหรือสแกนบาร์โค้ดเพื่อเพิ่มสินค้า</Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <View style={s.cartItem}>
-              {item.image_url ? (
-                <Image source={{ uri: item.image_url }} style={s.cartImg} />
-              ) : (
-                <View style={[s.cartImg, { backgroundColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center' }]}>
-                  <Text style={{ fontSize: 14 }}>📦</Text>
-                </View>
-              )}
-              <View style={{ flex: 1 }}>
-                <Text style={s.cartName} numberOfLines={2}>{item.name}</Text>
-                <Text style={s.cartPrice}>฿{fmt(item.price)}</Text>
-              </View>
-              <View style={s.qtyRow}>
-                <TouchableOpacity style={s.qtyBtn} onPress={() => updateQty(item.id, -1)}>
-                  <Text style={s.qtyBtnText}>−</Text>
-                </TouchableOpacity>
-                <Text style={s.qtyText}>{item.qty}</Text>
-                <TouchableOpacity style={s.qtyBtn} onPress={() => updateQty(item.id, 1)}>
-                  <Text style={s.qtyBtnText}>+</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={s.cartSubtotal}>฿{fmt(item.price * item.qty)}</Text>
-              <TouchableOpacity onPress={() => removeItem(item.id)} style={{ paddingLeft: 8 }}>
-                <Text style={{ color: '#ef4444', fontSize: 18 }}>✕</Text>
-              </TouchableOpacity>
+      {/* Totals */}
+      <View style={s.summaryBox}>
+        <View style={s.sumRow}>
+          <Text style={s.sumLabel}>ยอดรวม</Text>
+          <Text style={s.sumVal}>฿{fmt(subtotal)}</Text>
+        </View>
+        <View style={s.sumRow}>
+          <Text style={s.sumLabel}>ส่วนลด</Text>
+          <TextInput
+            style={s.discInput}
+            value={discount}
+            onChangeText={setDiscount}
+            keyboardType="numeric"
+            selectTextOnFocus
+          />
+        </View>
+        <View style={[s.sumRow, s.netRow]}>
+          <Text style={s.netLabel}>ยอดสุทธิ</Text>
+          <Text style={s.netVal}>฿{fmt(total)}</Text>
+        </View>
+      </View>
+
+      {/* Payment method */}
+      <Text style={s.sectionLabel}>วิธีชำระเงิน</Text>
+      <View style={s.payRow}>
+        {PAY_METHODS.map(m => (
+          <TouchableOpacity key={m.key} style={[s.payBtn, payment === m.key && s.payBtnOn]}
+            onPress={() => setPayment(m.key)}>
+            <Text style={[s.payBtnTxt, payment === m.key && { color: '#fff' }]}>{m.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Cash received */}
+      {payment === 'cash' && (
+        <>
+          <Text style={s.sectionLabel}>รับเงิน</Text>
+          <TextInput
+            style={s.cashInput}
+            value={cashInput}
+            onChangeText={setCashInput}
+            keyboardType="numeric"
+            placeholder="0.00"
+            selectTextOnFocus
+          />
+          {cashInput !== '' && Number(cashInput) > 0 && (
+            <View style={s.changeRow}>
+              <Text style={s.changeLabel}>เงินทอน</Text>
+              <Text style={[s.changeVal, { color: change >= 0 ? '#10b981' : '#ef4444' }]}>
+                ฿{fmt(change)}
+              </Text>
             </View>
           )}
-        />
+        </>
+      )}
 
-        {/* Footer: discount + total + checkout */}
-        {cart.length > 0 && (
-          <View style={s.footer}>
-            <View style={s.discountRow}>
-              <Text style={s.footerLabel}>ส่วนลด</Text>
-              <TextInput
-                style={s.discountInput}
-                placeholder="0"
-                value={discount}
-                onChangeText={setDiscount}
-                keyboardType="numeric"
-              />
-              <Text style={s.footerLabel}>฿</Text>
+      {/* Action buttons */}
+      <View style={s.actionRow}>
+        <TouchableOpacity style={s.holdBtn} onPress={holdCurrentCart} disabled={cart.length === 0}>
+          <Text style={s.holdBtnTxt}>Hold บิล</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.recallBtn} onPress={() => { loadHeldBills(); setHoldModal(true); }}>
+          <Text style={s.recallBtnTxt}>เรียกบิล</Text>
+        </TouchableOpacity>
+      </View>
+
+      <TouchableOpacity
+        style={[s.checkoutBtn, (cart.length === 0 || submitting) && { opacity: 0.5 }]}
+        onPress={handleCheckout}
+        disabled={cart.length === 0 || submitting}
+      >
+        {submitting
+          ? <ActivityIndicator color="#fff" />
+          : <Text style={s.checkoutTxt}>ชำระเงิน ฿{fmt(total)}</Text>
+        }
+      </TouchableOpacity>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={s.root} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={s.container}>
+        {/* LEFT: search + product results + cart */}
+        <View style={s.leftPanel}>
+          {/* Header */}
+          <View style={s.topBar}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={s.topTitle}>หน้าขาย</Text>
+              {shift && (
+                <View style={s.shiftBadge}>
+                  <Text style={s.shiftBadgeTxt}>กะ{SHIFT_LABEL[shift.shift_type] || shift.shift_type}</Text>
+                </View>
+              )}
             </View>
-            <View style={s.totalRow}>
-              <Text style={s.totalLabel}>ยอดสุทธิ</Text>
-              <Text style={s.totalValue}>฿{fmt(total)}</Text>
-            </View>
-            <View style={s.footerBtns}>
-              <TouchableOpacity style={s.holdCartBtn} onPress={holdCurrentCart}>
-                <Text style={s.holdCartBtnText}>Hold บิล</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.checkoutBtn} onPress={() => setCheckoutModal(true)}>
-                <Text style={s.checkoutBtnText}>ชำระเงิน ฿{fmt(total)}</Text>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              {shift && (
+                <TouchableOpacity style={s.closeShiftBtn} onPress={openCloseShift}>
+                  <Text style={s.closeShiftTxt}>⏹ ปิดกะ</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={logout} style={s.logoutBtn}>
+                <Text style={s.logoutTxt}>ออกระบบ</Text>
               </TouchableOpacity>
             </View>
           </View>
-        )}
-      </KeyboardAvoidingView>
 
-      {/* Checkout Modal */}
-      <Modal visible={checkoutModal} animationType="slide" transparent>
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>ชำระเงิน</Text>
+          {/* Search bar */}
+          <View style={s.searchRow}>
+            <TextInput
+              style={s.searchInput}
+              placeholder="ค้นหาสินค้า หรือสแกน Barcode..."
+              value={search}
+              onChangeText={handleSearchChange}
+              returnKeyType="search"
+            />
+            <TouchableOpacity style={s.scanBtn} onPress={async () => {
+              if (camPermission?.granted) setScanning(true);
+              else { const { granted } = await requestCamPermission(); if (granted) setScanning(true); }
+            }}>
+              <Text style={{ fontSize: 20 }}>📷</Text>
+            </TouchableOpacity>
+          </View>
 
-            {/* Payment method */}
-            <View style={s.payRow}>
-              {PAYMENT.map(m => (
-                <TouchableOpacity key={m} style={[s.payBtn, payment === m && s.payBtnActive]} onPress={() => setPayment(m)}>
-                  <Text style={[s.payBtnText, payment === m && { color: '#fff' }]}>{PAY_LABEL[m]}</Text>
-                </TouchableOpacity>
-              ))}
+          {/* Search results */}
+          {(results.length > 0 || searchLoading) ? (
+            <View style={s.resultBox}>
+              {searchLoading
+                ? <ActivityIndicator style={{ padding: 12 }} color="#3b82f6" />
+                : (
+                  <FlatList
+                    data={results}
+                    keyExtractor={i => String(i.id)}
+                    style={{ maxHeight: 220 }}
+                    keyboardShouldPersistTaps="always"
+                    renderItem={({ item }) => (
+                      <TouchableOpacity style={s.resultItem} onPress={() => addToCart(item)}>
+                        {item.image_url
+                          ? <Image source={{ uri: item.image_url }} style={s.resultImg} />
+                          : <View style={[s.resultImg, s.imgPlaceholder]}><Text>📦</Text></View>
+                        }
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.resultName} numberOfLines={1}>{item.name}</Text>
+                          <Text style={s.resultCode}>{item.barcode}</Text>
+                        </View>
+                        <Text style={s.resultPrice}>฿{fmt(item.selling_price || item.price)}</Text>
+                      </TouchableOpacity>
+                    )}
+                  />
+                )
+              }
             </View>
+          ) : null}
 
-            <View style={s.summaryBox}>
-              <View style={s.summaryRow}><Text style={s.summaryLabel}>ยอดรวม</Text><Text>฿{fmt(subtotal)}</Text></View>
-              {discountAmt > 0 && <View style={s.summaryRow}><Text style={s.summaryLabel}>ส่วนลด</Text><Text style={{ color: '#ef4444' }}>-฿{fmt(discountAmt)}</Text></View>}
-              <View style={[s.summaryRow, { borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 8, marginTop: 4 }]}>
-                <Text style={[s.summaryLabel, { fontWeight: 'bold', fontSize: 18 }]}>ยอดสุทธิ</Text>
-                <Text style={{ fontWeight: 'bold', fontSize: 22, color: '#1e293b' }}>฿{fmt(total)}</Text>
+          {/* Cart label */}
+          <View style={s.cartHeader}>
+            <Text style={s.cartHeaderTxt}>รายการ ({cart.length})</Text>
+            {cart.length > 0 && (
+              <TouchableOpacity onPress={() => setCart([])}>
+                <Text style={{ color: '#ef4444', fontSize: 13 }}>ล้างทั้งหมด</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Cart list */}
+          <FlatList
+            data={cart}
+            keyExtractor={i => String(i.id)}
+            style={{ flex: 1 }}
+            ListEmptyComponent={
+              <View style={s.emptyCart}>
+                <Text style={{ fontSize: 36 }}>🛒</Text>
+                <Text style={s.emptyTxt}>สแกน Barcode หรือค้นหาสินค้า</Text>
               </View>
+            }
+            renderItem={({ item }) => (
+              <View style={s.cartItem}>
+                {item.image_url
+                  ? <Image source={{ uri: item.image_url }} style={s.cartImg} />
+                  : <View style={[s.cartImg, s.imgPlaceholder]}><Text style={{ fontSize: 12 }}>📦</Text></View>
+                }
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cartName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={s.cartPrice}>฿{fmt(item.price)} / {item.unit}</Text>
+                </View>
+                <View style={s.qtyCtrl}>
+                  <TouchableOpacity onPress={() => updateQty(item.id, -1)} style={s.qBtn}>
+                    <Text style={s.qBtnTxt}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={s.qNum}>{item.qty}</Text>
+                  <TouchableOpacity onPress={() => updateQty(item.id, 1)} style={s.qBtn}>
+                    <Text style={s.qBtnTxt}>+</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={s.cartSubtotal}>฿{fmt(item.price * item.qty)}</Text>
+              </View>
+            )}
+          />
+        </View>
+
+        {/* RIGHT PANEL */}
+        <RightPanel />
+      </View>
+
+      {/* Close Shift Modal */}
+      <Modal visible={closeShiftModal} animationType="fade" transparent>
+        <View style={s.overlay}>
+          <View style={[s.modalCard, { width: 420 }]}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>⏹ ปิดกะทำงาน</Text>
+              <TouchableOpacity onPress={() => setCloseShiftModal(false)}>
+                <Text style={{ fontSize: 20, color: '#64748b' }}>✕</Text>
+              </TouchableOpacity>
             </View>
 
-            {payment === 'cash' && (
-              <>
-                <Text style={s.inputLabel}>รับเงินมา</Text>
-                <TextInput
-                  style={s.cashInput}
-                  value={cashInput}
-                  onChangeText={setCashInput}
-                  keyboardType="numeric"
-                  placeholder={fmt(total)}
-                />
-                {cashInput !== '' && (
-                  <View style={s.changeRow}>
-                    <Text style={s.changeLabel}>เงินทอน</Text>
-                    <Text style={[s.changeValue, { color: change >= 0 ? '#10b981' : '#ef4444' }]}>฿{fmt(change)}</Text>
-                  </View>
-                )}
-              </>
+            {/* Shift summary */}
+            {shiftSummary && (
+              <View style={s.shiftSumBox}>
+                <View style={s.shiftSumRow}>
+                  <Text style={s.shiftSumLabel}>ยอดขายรวม</Text>
+                  <Text style={s.shiftSumVal}>฿{fmt(shiftSummary.total_sales)}</Text>
+                </View>
+                <View style={s.shiftSumRow}>
+                  <Text style={s.shiftSumLabel}>เงินสด</Text>
+                  <Text style={[s.shiftSumVal, { color: '#10b981' }]}>฿{fmt(shiftSummary.cash_sales)}</Text>
+                </View>
+                <View style={s.shiftSumRow}>
+                  <Text style={s.shiftSumLabel}>โอน/บัตร</Text>
+                  <Text style={[s.shiftSumVal, { color: '#3b82f6' }]}>฿{fmt(shiftSummary.transfer_sales)}</Text>
+                </View>
+                <View style={s.shiftSumRow}>
+                  <Text style={s.shiftSumLabel}>จำนวนบิล</Text>
+                  <Text style={s.shiftSumVal}>{shiftSummary.sale_count} บิล</Text>
+                </View>
+                <View style={[s.shiftSumRow, { borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 8, marginTop: 4 }]}>
+                  <Text style={s.shiftSumLabel}>เงินเก๊ะเปิดกะ</Text>
+                  <Text style={s.shiftSumVal}>฿{fmt(shiftSummary.opening_cash)}</Text>
+                </View>
+                <View style={s.shiftSumRow}>
+                  <Text style={[s.shiftSumLabel, { fontWeight: '600' }]}>เงินในลิ้นชัก (คาดการณ์)</Text>
+                  <Text style={[s.shiftSumVal, { fontWeight: 'bold', color: '#1e3a5f' }]}>
+                    ฿{fmt(Number(shiftSummary.opening_cash) + Number(shiftSummary.cash_sales))}
+                  </Text>
+                </View>
+              </View>
             )}
 
+            {/* Actual cash input */}
+            <Text style={[s.sectionLabel, { marginTop: 14 }]}>นับเงินจริง (Actual Cash)</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#3b82f6', borderRadius: 10, paddingHorizontal: 12, marginBottom: 8 }}>
+              <Text style={{ fontSize: 18, color: '#64748b', marginRight: 6 }}>฿</Text>
+              <TextInput
+                style={{ flex: 1, height: 48, fontSize: 22, fontWeight: 'bold', color: '#1e293b' }}
+                value={actualCash}
+                onChangeText={setActualCash}
+                keyboardType="numeric"
+                placeholder="0.00"
+                selectTextOnFocus
+              />
+            </View>
+
+            {/* Difference */}
+            {actualCash !== '' && shiftSummary && (() => {
+              const expected = Number(shiftSummary.opening_cash) + Number(shiftSummary.cash_sales);
+              const diff = parseFloat(actualCash) - expected;
+              return (
+                <View style={[s.changeRow, { marginBottom: 14, backgroundColor: diff >= 0 ? '#f0fdf4' : '#fef2f2' }]}>
+                  <Text style={{ fontWeight: '600', color: diff >= 0 ? '#064e3b' : '#991b1b' }}>
+                    {diff >= 0 ? '✓ เงินเกิน' : '⚠ เงินขาด'}
+                  </Text>
+                  <Text style={{ fontSize: 20, fontWeight: 'bold', color: diff >= 0 ? '#10b981' : '#ef4444' }}>
+                    {diff >= 0 ? '+' : ''}฿{fmt(diff)}
+                  </Text>
+                </View>
+              );
+            })()}
+
             <View style={s.modalBtns}>
-              <TouchableOpacity style={s.cancelBtn} onPress={() => setCheckoutModal(false)}>
-                <Text style={s.cancelBtnText}>ยกเลิก</Text>
+              <TouchableOpacity style={s.cancelBtn} onPress={() => setCloseShiftModal(false)}>
+                <Text style={{ color: '#64748b', fontWeight: '600' }}>ยกเลิก</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[s.confirmBtn, submitting && { opacity: 0.6 }]} onPress={handleCheckout} disabled={submitting}>
-                {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.confirmBtnText}>ยืนยัน</Text>}
+              <TouchableOpacity
+                style={[s.confirmBtn, { backgroundColor: '#ef4444' }, closingShift && { opacity: 0.6 }]}
+                onPress={handleCloseShift}
+                disabled={closingShift}
+              >
+                {closingShift
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 15 }}>ปิดกะ</Text>
+                }
               </TouchableOpacity>
             </View>
           </View>
@@ -372,34 +521,35 @@ export default function POSScreen() {
 
       {/* Held Bills Modal */}
       <Modal visible={holdModal} animationType="slide" transparent>
-        <View style={s.modalOverlay}>
+        <View style={s.overlay}>
           <View style={[s.modalCard, { maxHeight: '80%' }]}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <View style={s.modalHeader}>
               <Text style={s.modalTitle}>บิลที่ Hold ไว้</Text>
               <TouchableOpacity onPress={() => setHoldModal(false)}>
                 <Text style={{ fontSize: 20, color: '#64748b' }}>✕</Text>
               </TouchableOpacity>
             </View>
-            {heldBills.length === 0 ? (
-              <Text style={{ color: '#94a3b8', textAlign: 'center', paddingVertical: 24 }}>ไม่มีบิลที่ Hold ไว้</Text>
-            ) : (
-              <FlatList
-                data={heldBills}
-                keyExtractor={i => String(i.id)}
-                renderItem={({ item }) => (
-                  <TouchableOpacity style={s.heldItem} onPress={() => recallBill(item)}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.heldTitle}>{item.held_by_name || 'ไม่ระบุ'}</Text>
-                      <Text style={s.heldSub}>{(item.items || []).length} รายการ · {new Date(item.created_at).toLocaleTimeString('th-TH')}</Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={s.heldTotal}>฿{fmt(item.total_amount)}</Text>
-                      <Text style={{ color: '#3b82f6', fontSize: 12, marginTop: 4 }}>เรียกบิล →</Text>
-                    </View>
-                  </TouchableOpacity>
-                )}
-              />
-            )}
+            {heldBills.length === 0
+              ? <Text style={{ color: '#94a3b8', textAlign: 'center', paddingVertical: 32 }}>ไม่มีบิลที่ Hold ไว้</Text>
+              : (
+                <FlatList
+                  data={heldBills}
+                  keyExtractor={i => String(i.id)}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={s.heldItem} onPress={() => recallBill(item)}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.heldName}>{item.held_by_name || 'ไม่ระบุ'}</Text>
+                        <Text style={s.heldSub}>{(item.items || []).length} รายการ · {new Date(item.created_at).toLocaleTimeString('th-TH')}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={s.heldTotal}>฿{fmt(item.total_amount)}</Text>
+                        <Text style={{ color: '#3b82f6', fontSize: 12, marginTop: 4 }}>เรียกบิล →</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                />
+              )
+            }
           </View>
         </View>
       </Modal>
@@ -407,70 +557,102 @@ export default function POSScreen() {
   );
 }
 
+const BLUE = '#1e3a5f';
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#1e3a5f' },
-  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
-  headerRight: { flexDirection: 'row', gap: 8 },
-  holdBtn: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  holdBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  searchRow: { flexDirection: 'row', padding: 12, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#e2e8f0' },
+  root: { flex: 1, backgroundColor: '#f1f5f9' },
+  container: { flex: 1, flexDirection: 'row' },
+
+  // Left panel
+  leftPanel: { flex: 1, flexDirection: 'column', backgroundColor: '#f1f5f9', minWidth: 0 },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: BLUE, paddingHorizontal: 16, paddingVertical: 10 },
+  topTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  logoutBtn: { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 6 },
+  logoutTxt: { color: '#fff', fontSize: 12 },
+  shiftBadge: { backgroundColor: '#10b981', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
+  shiftBadgeTxt: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  closeShiftBtn: { backgroundColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
+  closeShiftTxt: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  shiftSumBox: { backgroundColor: '#f8fafc', borderRadius: 10, padding: 12, marginBottom: 4 },
+  shiftSumRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  shiftSumLabel: { fontSize: 13, color: '#64748b' },
+  shiftSumVal: { fontSize: 14, fontWeight: '600', color: '#1e293b' },
+
+  searchRow: { flexDirection: 'row', padding: 10, gap: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#e2e8f0' },
   searchInput: { flex: 1, height: 44, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 14, fontSize: 15, backgroundColor: '#f8fafc' },
   scanBtn: { width: 44, height: 44, borderRadius: 10, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center' },
-  resultsBox: { backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#e2e8f0', elevation: 4, zIndex: 10 },
+
+  resultBox: { backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#e2e8f0', elevation: 4, zIndex: 10 },
   resultItem: { flexDirection: 'row', alignItems: 'center', padding: 10, gap: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   resultImg: { width: 40, height: 40, borderRadius: 8 },
+  imgPlaceholder: { backgroundColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center' },
   resultName: { fontSize: 14, fontWeight: '500', color: '#1e293b' },
-  resultBarcode: { fontSize: 11, color: '#94a3b8' },
+  resultCode: { fontSize: 11, color: '#94a3b8' },
   resultPrice: { fontSize: 15, fontWeight: 'bold', color: '#3b82f6' },
-  cart: { flex: 1, padding: 8 },
-  emptyCart: { alignItems: 'center', paddingTop: 60, paddingBottom: 40 },
-  emptyText: { fontSize: 16, color: '#64748b', marginTop: 12, fontWeight: '500' },
-  emptyHint: { fontSize: 12, color: '#94a3b8', marginTop: 6 },
-  cartItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, padding: 10, marginBottom: 6, gap: 8, elevation: 1 },
+
+  cartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#f8fafc', borderBottomWidth: 1, borderColor: '#e2e8f0' },
+  cartHeaderTxt: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  emptyCart: { alignItems: 'center', paddingTop: 48 },
+  emptyTxt: { color: '#94a3b8', marginTop: 10, fontSize: 14 },
+  cartItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 8, marginTop: 6, borderRadius: 10, padding: 10, gap: 8, elevation: 1 },
   cartImg: { width: 36, height: 36, borderRadius: 8 },
-  cartName: { fontSize: 13, fontWeight: '500', color: '#1e293b', flex: 1 },
-  cartPrice: { fontSize: 11, color: '#64748b' },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  qtyBtn: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center' },
-  qtyBtnText: { fontSize: 18, color: '#3b82f6', lineHeight: 22 },
-  qtyText: { fontSize: 15, fontWeight: 'bold', color: '#1e293b', minWidth: 24, textAlign: 'center' },
-  cartSubtotal: { fontSize: 14, fontWeight: 'bold', color: '#1e293b', minWidth: 70, textAlign: 'right' },
-  footer: { backgroundColor: '#fff', padding: 16, borderTopWidth: 1, borderColor: '#e2e8f0', elevation: 8 },
-  discountRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  footerLabel: { fontSize: 14, color: '#64748b' },
-  discountInput: { flex: 1, height: 36, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, fontSize: 15, textAlign: 'right' },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  totalLabel: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
-  totalValue: { fontSize: 26, fontWeight: 'bold', color: '#1e3a5f' },
-  footerBtns: { flexDirection: 'row', gap: 10 },
-  holdCartBtn: { flex: 0.4, height: 50, backgroundColor: '#f1f5f9', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  holdCartBtnText: { color: '#475569', fontWeight: '600' },
-  checkoutBtn: { flex: 0.6, height: 50, backgroundColor: '#3b82f6', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  checkoutBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+  cartName: { fontSize: 13, fontWeight: '500', color: '#1e293b' },
+  cartPrice: { fontSize: 11, color: '#64748b', marginTop: 2 },
+  qtyCtrl: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  qBtn: { width: 28, height: 28, borderRadius: 7, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center' },
+  qBtnTxt: { fontSize: 17, color: '#3b82f6', lineHeight: 21 },
+  qNum: { fontSize: 15, fontWeight: 'bold', color: '#1e293b', minWidth: 22, textAlign: 'center' },
+  cartSubtotal: { fontSize: 14, fontWeight: 'bold', color: '#1e293b', minWidth: 68, textAlign: 'right' },
+
+  // Right panel
+  rightPanel: { width: 340, backgroundColor: '#fff', borderLeftWidth: 1, borderColor: '#e2e8f0', padding: 14, flexDirection: 'column' },
+  panelTitle: { fontSize: 16, fontWeight: 'bold', color: BLUE, marginBottom: 8 },
+
+  miniCart: { flex: 1, maxHeight: 220 },
+  emptyMini: { color: '#94a3b8', textAlign: 'center', paddingVertical: 16, fontSize: 13 },
+  miniItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderColor: '#f1f5f9', gap: 6 },
+  miniName: { fontSize: 12, fontWeight: '500', color: '#1e293b' },
+  miniSub: { fontSize: 11, color: '#94a3b8' },
+  miniQty: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  miniTotal: { fontSize: 12, fontWeight: 'bold', color: '#1e293b', minWidth: 56, textAlign: 'right' },
+
+  summaryBox: { backgroundColor: '#f8fafc', borderRadius: 10, padding: 10, marginTop: 6 },
+  sumRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  sumLabel: { fontSize: 13, color: '#64748b' },
+  sumVal: { fontSize: 13, color: '#1e293b' },
+  netRow: { borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 6, marginTop: 2 },
+  netLabel: { fontSize: 16, fontWeight: 'bold', color: BLUE },
+  netVal: { fontSize: 20, fontWeight: 'bold', color: BLUE },
+  discInput: { width: 80, height: 30, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 6, paddingHorizontal: 8, fontSize: 14, textAlign: 'right', backgroundColor: '#fff' },
+
+  sectionLabel: { fontSize: 12, color: '#64748b', marginTop: 10, marginBottom: 4 },
+  payRow: { flexDirection: 'row', gap: 6 },
+  payBtn: { flex: 1, height: 36, borderRadius: 8, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' },
+  payBtnOn: { backgroundColor: '#3b82f6', borderColor: '#3b82f6' },
+  payBtnTxt: { fontSize: 12, fontWeight: '600', color: '#475569' },
+
+  cashInput: { height: 40, borderWidth: 1.5, borderColor: '#3b82f6', borderRadius: 8, paddingHorizontal: 10, fontSize: 18, fontWeight: 'bold', marginTop: 2 },
+  changeRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#f0fdf4', padding: 8, borderRadius: 8, marginTop: 6 },
+  changeLabel: { fontSize: 13, color: '#064e3b' },
+  changeVal: { fontSize: 16, fontWeight: 'bold' },
+
+  actionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  holdBtn: { flex: 1, height: 40, backgroundColor: '#fef9c3', borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#fde047' },
+  holdBtnTxt: { color: '#854d0e', fontWeight: '600', fontSize: 13 },
+  recallBtn: { flex: 1, height: 40, backgroundColor: '#eff6ff', borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#bfdbfe' },
+  recallBtnTxt: { color: '#1d4ed8', fontWeight: '600', fontSize: 13 },
+  checkoutBtn: { height: 50, backgroundColor: '#10b981', borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
+  checkoutTxt: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+
+  // Camera
   cancelScan: { position: 'absolute', bottom: 48, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 30 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalCard: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36 },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
-  payRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  payBtn: { flex: 1, height: 44, borderRadius: 12, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' },
-  payBtnActive: { backgroundColor: '#3b82f6', borderColor: '#3b82f6' },
-  payBtnText: { fontWeight: '600', color: '#475569' },
-  summaryBox: { backgroundColor: '#f8fafc', borderRadius: 12, padding: 16, marginBottom: 16 },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  summaryLabel: { color: '#64748b', fontSize: 15 },
-  inputLabel: { fontSize: 14, color: '#64748b', marginBottom: 6 },
-  cashInput: { height: 50, borderWidth: 1.5, borderColor: '#3b82f6', borderRadius: 12, paddingHorizontal: 16, fontSize: 22, fontWeight: 'bold', marginBottom: 10 },
-  changeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f0fdf4', padding: 12, borderRadius: 10, marginBottom: 16 },
-  changeLabel: { fontSize: 15, color: '#064e3b' },
-  changeValue: { fontSize: 22, fontWeight: 'bold' },
-  modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  cancelBtn: { flex: 1, height: 50, backgroundColor: '#f1f5f9', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  cancelBtnText: { color: '#64748b', fontWeight: '600', fontSize: 15 },
-  confirmBtn: { flex: 1, height: 50, backgroundColor: '#10b981', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  confirmBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
-  heldItem: { flexDirection: 'row', padding: 14, borderBottomWidth: 1, borderColor: '#f1f5f9', alignItems: 'center' },
-  heldTitle: { fontSize: 15, fontWeight: '600', color: '#1e293b' },
+
+  // Modals
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 32 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
+  heldItem: { flexDirection: 'row', padding: 12, borderBottomWidth: 1, borderColor: '#f1f5f9', alignItems: 'center' },
+  heldName: { fontSize: 14, fontWeight: '600', color: '#1e293b' },
   heldSub: { fontSize: 12, color: '#94a3b8', marginTop: 2 },
-  heldTotal: { fontSize: 16, fontWeight: 'bold', color: '#1e293b' },
+  heldTotal: { fontSize: 15, fontWeight: 'bold', color: '#1e293b' },
 });

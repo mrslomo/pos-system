@@ -15,7 +15,6 @@ export default function WeighScreen() {
   const [weight, setWeight] = useState('');
   const [manualWeight, setManualWeight] = useState('');
   const [scaleConnected, setScaleConnected] = useState(false);
-  const [polling, setPolling] = useState(false);
   const [cart, setCart] = useState([]);
   const [checkoutModal, setCheckoutModal] = useState(false);
   const [payment, setPayment] = useState('cash');
@@ -28,6 +27,8 @@ export default function WeighScreen() {
     clearInterval(pollRef.current);
     clearTimeout(debounceRef.current);
   }, []);
+
+  const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 
   const searchProducts = async (q) => {
     if (!q || q.length < 1) { setResults([]); return; }
@@ -49,28 +50,18 @@ export default function WeighScreen() {
     setResults([]);
   };
 
-  const startScalePoll = () => {
-    setPolling(true);
-    pollRef.current = setInterval(async () => {
-      try {
-        const data = await scaleAPI.weight();
-        if (data?.weight !== undefined) setWeight(String(data.weight));
-      } catch {
-        // scale disconnected or error
-      }
-    }, 500);
-  };
-
   const connectScale = async () => {
     try {
       const ports = await scaleAPI.ports();
-      if (!ports || ports.length === 0) {
-        Alert.alert('ไม่พบพอร์ต', 'ไม่พบเครื่องชั่งที่เชื่อมต่ออยู่');
-        return;
-      }
+      if (!ports || ports.length === 0) { Alert.alert('ไม่พบพอร์ต', 'ไม่พบเครื่องชั่งที่เชื่อมต่ออยู่'); return; }
       await scaleAPI.connect({ port: ports[0].path, baud_rate: 9600 });
       setScaleConnected(true);
-      startScalePoll();
+      pollRef.current = setInterval(async () => {
+        try {
+          const data = await scaleAPI.weight();
+          if (data?.weight !== undefined) setWeight(String(data.weight));
+        } catch {}
+      }, 500);
     } catch (err) {
       Alert.alert('เชื่อมต่อไม่สำเร็จ', err?.message || 'ไม่สามารถเชื่อมต่อเครื่องชั่งได้');
     }
@@ -78,7 +69,6 @@ export default function WeighScreen() {
 
   const disconnectScale = () => {
     clearInterval(pollRef.current);
-    setPolling(false);
     setScaleConnected(false);
     setWeight('');
   };
@@ -98,7 +88,6 @@ export default function WeighScreen() {
       cost: Number(selectedProduct.cost_price || 0),
       weight: effectiveWeight,
       subtotal: lineTotal,
-      image_url: selectedProduct.image_url || null,
     }]);
     setWeight('');
     setManualWeight('');
@@ -116,194 +105,200 @@ export default function WeighScreen() {
     try {
       await salesAPI.create({
         branch_id: user.branch_id,
-        items: cart.map(i => ({
-          product_id: i.product_id,
-          quantity: i.weight,
-          unit_price: i.price,
-          cost_price: i.cost,
-          subtotal: i.subtotal,
-        })),
-        subtotal: total,
-        discount_amount: 0,
-        total_amount: total,
+        items: cart.map(i => ({ product_id: i.product_id, quantity: i.weight, unit_price: i.price, cost_price: i.cost, subtotal: i.subtotal })),
+        subtotal: total, discount_amount: 0, total_amount: total,
         payment_method: payment,
         payment_amount: payment === 'cash' ? (parseFloat(cashInput) || total) : total,
       });
       setCart([]);
       setCashInput('');
       setCheckoutModal(false);
-      Alert.alert('สำเร็จ', 'บันทึกการขายเรียบร้อย ✓');
+      Alert.alert('✓ สำเร็จ', 'บันทึกการขายเรียบร้อย');
     } catch (err) {
       Alert.alert('เกิดข้อผิดพลาด', err?.message || 'ไม่สามารถบันทึกการขายได้');
-    } finally {
-      setSubmitting(false);
-    }
+    } finally { setSubmitting(false); }
   };
 
-  const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
-
   return (
-    <SafeAreaView style={s.root} edges={['top']}>
-      {/* Header */}
-      <View style={s.header}>
-        <Text style={s.headerTitle}>ชั่งน้ำหนัก</Text>
-        <TouchableOpacity
-          style={[s.scaleBtn, scaleConnected && { backgroundColor: '#10b981' }]}
-          onPress={scaleConnected ? disconnectScale : connectScale}
-        >
-          <Text style={s.scaleBtnText}>{scaleConnected ? '⚖️ เชื่อมต่อแล้ว' : '⚖️ เชื่อมต่อตาชั่ง'}</Text>
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={s.root} edges={['top', 'bottom', 'left', 'right']}>
+      <View style={s.container}>
 
-      {/* Weight display */}
-      <View style={s.weightCard}>
-        <Text style={s.weightLabel}>น้ำหนัก</Text>
-        <View style={s.weightDisplay}>
-          <Text style={[s.weightValue, { color: scaleConnected ? '#1e3a5f' : '#94a3b8' }]}>
-            {scaleConnected ? (weight || '0.000') : '—'}
-          </Text>
-          <Text style={s.weightUnit}>กก.</Text>
-        </View>
-
-        {/* Manual input */}
-        {!scaleConnected && (
-          <View style={s.manualRow}>
-            <TextInput
-              style={s.manualInput}
-              placeholder="ใส่น้ำหนักเอง..."
-              value={manualWeight}
-              onChangeText={setManualWeight}
-              keyboardType="numeric"
-            />
-            <Text style={s.manualUnit}>กก.</Text>
+        {/* LEFT: weight display + product search + cart */}
+        <View style={s.left}>
+          {/* Top bar */}
+          <View style={s.topBar}>
+            <Text style={s.topTitle}>ชั่งน้ำหนัก</Text>
+            <TouchableOpacity
+              style={[s.scaleBtn, scaleConnected && { backgroundColor: '#10b981' }]}
+              onPress={scaleConnected ? disconnectScale : connectScale}
+            >
+              <Text style={s.scaleBtnTxt}>{scaleConnected ? '⚖️ เชื่อมต่อแล้ว' : '⚖️ เชื่อมต่อตาชั่ง'}</Text>
+            </TouchableOpacity>
           </View>
-        )}
-      </View>
 
-      {/* Product search */}
-      <View style={s.searchBox}>
-        <TextInput
-          style={s.searchInput}
-          placeholder="ค้นหาสินค้า..."
-          value={search}
-          onChangeText={handleSearch}
-        />
-      </View>
-      {results.length > 0 && (
-        <View style={s.resultBox}>
-          <FlatList
-            data={results}
-            keyExtractor={i => String(i.id)}
-            style={{ maxHeight: 180 }}
-            keyboardShouldPersistTaps="always"
-            renderItem={({ item }) => (
-              <TouchableOpacity style={s.resultItem} onPress={() => selectProduct(item)}>
-                {item.image_url ? (
-                  <Image source={{ uri: item.image_url }} style={s.resultImg} />
-                ) : (
-                  <View style={[s.resultImg, { backgroundColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center' }]}>
-                    <Text>📦</Text>
-                  </View>
-                )}
-                <View style={{ flex: 1 }}>
-                  <Text style={s.resultName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={s.resultSub}>{item.unit} · ฿{fmt(item.selling_price || item.price)}/กก.</Text>
+          {/* Weight + search row */}
+          <View style={s.topSection}>
+            {/* Weight display */}
+            <View style={s.weightBox}>
+              <Text style={s.weightLabel}>น้ำหนัก</Text>
+              <View style={s.weightRow}>
+                <Text style={[s.weightVal, !scaleConnected && { color: '#94a3b8' }]}>
+                  {scaleConnected ? (weight || '0.000') : (manualWeight || '0.000')}
+                </Text>
+                <Text style={s.weightUnit}>กก.</Text>
+              </View>
+              {!scaleConnected && (
+                <TextInput
+                  style={s.manualInput}
+                  placeholder="ใส่น้ำหนักเอง"
+                  value={manualWeight}
+                  onChangeText={setManualWeight}
+                  keyboardType="numeric"
+                  selectTextOnFocus
+                />
+              )}
+            </View>
+
+            {/* Product search */}
+            <View style={{ flex: 1 }}>
+              <TextInput
+                style={s.searchInput}
+                placeholder="ค้นหาสินค้า..."
+                value={search}
+                onChangeText={handleSearch}
+              />
+              {results.length > 0 && (
+                <View style={s.resultBox}>
+                  <FlatList
+                    data={results}
+                    keyExtractor={i => String(i.id)}
+                    style={{ maxHeight: 160 }}
+                    keyboardShouldPersistTaps="always"
+                    renderItem={({ item }) => (
+                      <TouchableOpacity style={s.resultItem} onPress={() => selectProduct(item)}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.resultName} numberOfLines={1}>{item.name}</Text>
+                          <Text style={s.resultSub}>฿{fmt(item.selling_price || item.price)}/กก.</Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                  />
                 </View>
+              )}
+              {selectedProduct && (
+                <View style={s.selectedCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.selName} numberOfLines={1}>{selectedProduct.name}</Text>
+                    <Text style={s.selSub}>฿{fmt(unitPrice)}/กก. × {effectiveWeight.toFixed(3)} กก. = ฿{fmt(lineTotal)}</Text>
+                  </View>
+                  <TouchableOpacity style={s.addBtn} onPress={addToCart}>
+                    <Text style={s.addBtnTxt}>+ เพิ่ม</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </View>
+
+          {/* Cart */}
+          <View style={s.cartHeader}>
+            <Text style={s.cartHeaderTxt}>รายการ ({cart.length})</Text>
+            {cart.length > 0 && (
+              <TouchableOpacity onPress={() => setCart([])}>
+                <Text style={{ color: '#ef4444', fontSize: 13 }}>ล้างทั้งหมด</Text>
               </TouchableOpacity>
+            )}
+          </View>
+          <FlatList
+            data={cart}
+            keyExtractor={i => String(i.id)}
+            style={{ flex: 1 }}
+            ListEmptyComponent={
+              <View style={s.emptyCart}>
+                <Text style={{ fontSize: 30 }}>⚖️</Text>
+                <Text style={s.emptyTxt}>เพิ่มสินค้าเพื่อเริ่มต้น</Text>
+              </View>
+            }
+            renderItem={({ item }) => (
+              <View style={s.cartItem}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cartName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={s.cartSub}>{item.weight.toFixed(3)} กก. × ฿{fmt(item.price)}</Text>
+                </View>
+                <Text style={s.cartTotal}>฿{fmt(item.subtotal)}</Text>
+                <TouchableOpacity onPress={() => removeCart(item.id)} style={{ paddingLeft: 12 }}>
+                  <Text style={{ color: '#ef4444', fontSize: 18 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
             )}
           />
         </View>
-      )}
 
-      {/* Selected product + add button */}
-      {selectedProduct && (
-        <View style={s.selectedCard}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.selectedName} numberOfLines={1}>{selectedProduct.name}</Text>
-            <Text style={s.selectedPrice}>฿{fmt(unitPrice)}/กก. × {effectiveWeight.toFixed(3)} กก.</Text>
-          </View>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={s.lineTotal}>฿{fmt(lineTotal)}</Text>
-            <TouchableOpacity style={s.addBtn} onPress={addToCart}>
-              <Text style={s.addBtnText}>+ เพิ่ม</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+        {/* RIGHT: summary + checkout */}
+        <View style={s.right}>
+          <Text style={s.panelTitle}>สรุปยอด</Text>
 
-      {/* Cart */}
-      <FlatList
-        data={cart}
-        keyExtractor={i => String(i.id)}
-        style={s.cart}
-        ListHeaderComponent={cart.length > 0 ? <Text style={s.cartHeader}>ตะกร้า</Text> : null}
-        ListEmptyComponent={
-          <View style={{ alignItems: 'center', padding: 32 }}>
-            <Text style={{ color: '#94a3b8', fontSize: 14 }}>เพิ่มสินค้าเพื่อเริ่มต้น</Text>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <View style={s.cartItem}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.cartName} numberOfLines={1}>{item.name}</Text>
-              <Text style={s.cartSub}>{item.weight.toFixed(3)} กก. × ฿{fmt(item.price)}</Text>
+          <View style={s.summaryBox}>
+            <View style={s.sumRow}>
+              <Text style={s.sumLabel}>จำนวนรายการ</Text>
+              <Text style={s.sumVal}>{cart.length} รายการ</Text>
             </View>
-            <Text style={s.cartSubtotal}>฿{fmt(item.subtotal)}</Text>
-            <TouchableOpacity onPress={() => removeCart(item.id)} style={{ paddingLeft: 10 }}>
-              <Text style={{ color: '#ef4444', fontSize: 18 }}>✕</Text>
-            </TouchableOpacity>
+            <View style={[s.sumRow, s.netRow]}>
+              <Text style={s.netLabel}>ยอดรวม</Text>
+              <Text style={s.netVal}>฿{fmt(total)}</Text>
+            </View>
           </View>
-        )}
-      />
 
-      {/* Footer */}
-      {cart.length > 0 && (
-        <View style={s.footer}>
-          <View style={s.totalRow}>
-            <Text style={s.totalLabel}>ยอดรวม</Text>
-            <Text style={s.totalValue}>฿{fmt(total)}</Text>
+          <Text style={s.sectionLabel}>วิธีชำระเงิน</Text>
+          <View style={s.payRow}>
+            {[{ key: 'cash', label: 'เงินสด' }, { key: 'transfer', label: 'โอน' }].map(m => (
+              <TouchableOpacity key={m.key} style={[s.payBtn, payment === m.key && s.payBtnOn]}
+                onPress={() => setPayment(m.key)}>
+                <Text style={[s.payBtnTxt, payment === m.key && { color: '#fff' }]}>{m.label}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
-          <TouchableOpacity style={s.checkoutBtn} onPress={() => setCheckoutModal(true)}>
-            <Text style={s.checkoutBtnText}>ชำระเงิน ฿{fmt(total)}</Text>
+
+          {payment === 'cash' && (
+            <>
+              <Text style={s.sectionLabel}>รับเงิน</Text>
+              <TextInput
+                style={s.cashInput}
+                value={cashInput}
+                onChangeText={setCashInput}
+                keyboardType="numeric"
+                placeholder="0.00"
+                selectTextOnFocus
+              />
+              {cashInput !== '' && Number(cashInput) > 0 && (
+                <View style={s.changeRow}>
+                  <Text style={{ color: '#064e3b', fontSize: 13 }}>เงินทอน</Text>
+                  <Text style={{ fontWeight: 'bold', fontSize: 18, color: change >= 0 ? '#10b981' : '#ef4444' }}>฿{fmt(change)}</Text>
+                </View>
+              )}
+            </>
+          )}
+
+          <View style={{ flex: 1 }} />
+
+          <TouchableOpacity
+            style={[s.checkoutBtn, (cart.length === 0 || submitting) && { opacity: 0.5 }]}
+            onPress={() => cart.length > 0 && setCheckoutModal(true)}
+            disabled={cart.length === 0}
+          >
+            <Text style={s.checkoutTxt}>ชำระเงิน ฿{fmt(total)}</Text>
           </TouchableOpacity>
         </View>
-      )}
+      </View>
 
-      {/* Checkout Modal */}
-      <Modal visible={checkoutModal} animationType="slide" transparent>
+      {/* Checkout confirm modal */}
+      <Modal visible={checkoutModal} animationType="fade" transparent>
         <View style={s.overlay}>
           <View style={s.modal}>
-            <Text style={s.modalTitle}>ชำระเงิน</Text>
-            <View style={s.payRow}>
-              {['cash', 'transfer'].map(m => (
-                <TouchableOpacity key={m} style={[s.payBtn, payment === m && s.payActive]} onPress={() => setPayment(m)}>
-                  <Text style={[{ color: '#475569', fontWeight: '600' }, payment === m && { color: '#fff' }]}>
-                    {m === 'cash' ? 'เงินสด' : 'โอน'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <Text style={s.modalTitle}>ยืนยันการชำระเงิน</Text>
+            <View style={s.confirmRow}>
+              <Text style={{ fontSize: 16, color: '#64748b' }}>ยอดสุทธิ</Text>
+              <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#1e3a5f' }}>฿{fmt(total)}</Text>
             </View>
-            <View style={s.summaryRow}>
-              <Text style={{ fontSize: 18, color: '#64748b' }}>ยอดสุทธิ</Text>
-              <Text style={{ fontSize: 26, fontWeight: 'bold' }}>฿{fmt(total)}</Text>
-            </View>
-            {payment === 'cash' && (
-              <>
-                <TextInput
-                  style={s.cashInput}
-                  placeholder={`รับเงิน ฿${fmt(total)}`}
-                  value={cashInput}
-                  onChangeText={setCashInput}
-                  keyboardType="numeric"
-                />
-                {cashInput !== '' && (
-                  <View style={s.changeRow}>
-                    <Text>เงินทอน</Text>
-                    <Text style={{ fontWeight: 'bold', fontSize: 20, color: change >= 0 ? '#10b981' : '#ef4444' }}>฿{fmt(change)}</Text>
-                  </View>
-                )}
-              </>
-            )}
             <View style={s.modalBtns}>
               <TouchableOpacity style={s.cancelBtn} onPress={() => setCheckoutModal(false)}>
                 <Text style={{ color: '#64748b', fontWeight: '600' }}>ยกเลิก</Text>
@@ -319,55 +314,71 @@ export default function WeighScreen() {
   );
 }
 
+const BLUE = '#1e3a5f';
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#1e3a5f' },
-  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
+  root: { flex: 1, backgroundColor: '#f1f5f9' },
+  container: { flex: 1, flexDirection: 'row' },
+
+  left: { flex: 1, flexDirection: 'column', minWidth: 0 },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: BLUE, paddingHorizontal: 16, paddingVertical: 10 },
+  topTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   scaleBtn: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  scaleBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  weightCard: { backgroundColor: '#1e3a5f', paddingHorizontal: 24, paddingBottom: 20, alignItems: 'center' },
-  weightLabel: { color: '#93c5fd', fontSize: 13, marginBottom: 4 },
-  weightDisplay: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  weightValue: { fontSize: 56, fontWeight: 'bold', color: '#fff', fontVariant: ['tabular-nums'] },
-  weightUnit: { fontSize: 22, color: '#93c5fd', marginBottom: 4 },
-  manualRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, width: '100%', maxWidth: 240 },
-  manualInput: { flex: 1, height: 44, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 10, paddingHorizontal: 14, fontSize: 20, color: '#fff', textAlign: 'center', fontWeight: 'bold' },
-  manualUnit: { color: '#93c5fd', fontSize: 16 },
-  searchBox: { padding: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#e2e8f0' },
-  searchInput: { height: 44, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, paddingHorizontal: 14, fontSize: 15, backgroundColor: '#f8fafc' },
-  resultBox: { backgroundColor: '#fff', borderBottomWidth: 1, borderColor: '#e2e8f0', elevation: 4 },
-  resultItem: { flexDirection: 'row', alignItems: 'center', padding: 10, gap: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
-  resultImg: { width: 36, height: 36, borderRadius: 8 },
+  scaleBtnTxt: { color: '#fff', fontSize: 13, fontWeight: '600' },
+
+  topSection: { flexDirection: 'row', gap: 12, padding: 10, backgroundColor: BLUE, alignItems: 'flex-start' },
+  weightBox: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 10, minWidth: 140 },
+  weightLabel: { color: '#93c5fd', fontSize: 11, marginBottom: 2 },
+  weightRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
+  weightVal: { fontSize: 36, fontWeight: 'bold', color: '#fff', fontVariant: ['tabular-nums'] },
+  weightUnit: { fontSize: 16, color: '#93c5fd' },
+  manualInput: { marginTop: 6, width: 120, height: 36, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, paddingHorizontal: 10, fontSize: 18, color: '#fff', textAlign: 'center', fontWeight: 'bold' },
+
+  searchInput: { height: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', borderRadius: 10, paddingHorizontal: 12, fontSize: 14, backgroundColor: 'rgba(255,255,255,0.15)', color: '#fff' },
+  resultBox: { position: 'absolute', top: 44, left: 0, right: 0, backgroundColor: '#fff', borderRadius: 10, elevation: 8, zIndex: 20 },
+  resultItem: { padding: 10, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   resultName: { fontSize: 14, fontWeight: '500', color: '#1e293b' },
   resultSub: { fontSize: 11, color: '#94a3b8' },
-  selectedCard: { flexDirection: 'row', alignItems: 'center', margin: 12, backgroundColor: '#eff6ff', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#bfdbfe' },
-  selectedName: { fontSize: 15, fontWeight: '600', color: '#1e293b' },
-  selectedPrice: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  lineTotal: { fontSize: 18, fontWeight: 'bold', color: '#1e3a5f', marginBottom: 8 },
-  addBtn: { backgroundColor: '#3b82f6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
-  addBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  cartHeader: { fontSize: 13, fontWeight: '600', color: '#64748b', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 },
-  cart: { flex: 1 },
-  cartItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 12, marginBottom: 6, borderRadius: 10, padding: 12, elevation: 1, gap: 8 },
+
+  selectedCard: { flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 10, padding: 10, gap: 8 },
+  selName: { fontSize: 13, fontWeight: '600', color: '#fff' },
+  selSub: { fontSize: 11, color: '#93c5fd', marginTop: 2 },
+  addBtn: { backgroundColor: '#3b82f6', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  addBtnTxt: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+
+  cartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#f8fafc', borderBottomWidth: 1, borderColor: '#e2e8f0' },
+  cartHeaderTxt: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  emptyCart: { alignItems: 'center', paddingTop: 32 },
+  emptyTxt: { color: '#94a3b8', marginTop: 8, fontSize: 13 },
+  cartItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 8, marginTop: 6, borderRadius: 10, padding: 12, elevation: 1 },
   cartName: { fontSize: 14, fontWeight: '500', color: '#1e293b' },
   cartSub: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
-  cartSubtotal: { fontSize: 15, fontWeight: 'bold', color: '#1e293b', minWidth: 80, textAlign: 'right' },
-  footer: { backgroundColor: '#fff', padding: 16, borderTopWidth: 1, borderColor: '#e2e8f0' },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  totalLabel: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
-  totalValue: { fontSize: 26, fontWeight: 'bold', color: '#1e3a5f' },
-  checkoutBtn: { height: 50, backgroundColor: '#3b82f6', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  checkoutBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modal: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 36 },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
-  payRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  payBtn: { flex: 1, height: 44, borderRadius: 12, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center' },
-  payActive: { backgroundColor: '#3b82f6' },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  cashInput: { height: 50, borderWidth: 1.5, borderColor: '#3b82f6', borderRadius: 12, paddingHorizontal: 16, fontSize: 22, fontWeight: 'bold', marginBottom: 10 },
-  changeRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#f0fdf4', padding: 12, borderRadius: 10, marginBottom: 16 },
-  modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  cancelBtn: { flex: 1, height: 50, backgroundColor: '#f1f5f9', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  confirmBtn: { flex: 1, height: 50, backgroundColor: '#10b981', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  cartTotal: { fontSize: 14, fontWeight: 'bold', color: '#1e293b', minWidth: 80, textAlign: 'right' },
+
+  // Right panel
+  right: { width: 300, backgroundColor: '#fff', borderLeftWidth: 1, borderColor: '#e2e8f0', padding: 14 },
+  panelTitle: { fontSize: 16, fontWeight: 'bold', color: BLUE, marginBottom: 10 },
+  summaryBox: { backgroundColor: '#f8fafc', borderRadius: 10, padding: 12 },
+  sumRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  sumLabel: { fontSize: 13, color: '#64748b' },
+  sumVal: { fontSize: 13, color: '#1e293b' },
+  netRow: { borderTopWidth: 1, borderColor: '#e2e8f0', paddingTop: 8, marginTop: 2 },
+  netLabel: { fontSize: 16, fontWeight: 'bold', color: BLUE },
+  netVal: { fontSize: 22, fontWeight: 'bold', color: BLUE },
+  sectionLabel: { fontSize: 12, color: '#64748b', marginTop: 12, marginBottom: 4 },
+  payRow: { flexDirection: 'row', gap: 8 },
+  payBtn: { flex: 1, height: 38, borderRadius: 8, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' },
+  payBtnOn: { backgroundColor: '#3b82f6', borderColor: '#3b82f6' },
+  payBtnTxt: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  cashInput: { height: 44, borderWidth: 1.5, borderColor: '#3b82f6', borderRadius: 8, paddingHorizontal: 10, fontSize: 20, fontWeight: 'bold', marginTop: 2 },
+  changeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f0fdf4', padding: 10, borderRadius: 8, marginTop: 8 },
+  checkoutBtn: { height: 50, backgroundColor: '#10b981', borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginTop: 12 },
+  checkoutTxt: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modal: { backgroundColor: '#fff', borderRadius: 20, padding: 28, width: 340 },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginBottom: 16 },
+  confirmRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalBtns: { flexDirection: 'row', gap: 12 },
+  cancelBtn: { flex: 1, height: 48, backgroundColor: '#f1f5f9', borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  confirmBtn: { flex: 1, height: 48, backgroundColor: '#10b981', borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
 });
