@@ -24,6 +24,7 @@ app.use('/api/sales', require('./routes/sales'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/branches', require('./routes/branches'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/payment-notify', require('./routes/payment-notify'));
 
 // Scale endpoints
 const scaleService = require('./services/scaleService');

@@ -1,14 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator,
 } from 'react-native';
 import * as Print from 'expo-print';
 import * as Speech from 'expo-speech';
 import generatePayload from 'promptpay-qr';
-import { bankAccountAPI } from '../services/api';
+import { bankAccountAPI, paymentNotifyAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-// Generate QR as Data URL using Google Charts API (no native dependency)
 function qrUrl(data, size = 300) {
   const encoded = encodeURIComponent(data);
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encoded}&ecc=M&margin=10`;
@@ -32,7 +31,6 @@ function buildReceiptHtml({ amount, promptpayId, accountName, branchName, qrData
   .page { width: 80mm; margin: 0 auto; padding: 6mm 4mm; }
   .center { text-align: center; }
   .shop { font-size: 16pt; font-weight: bold; margin-bottom: 2mm; }
-  .branch { font-size: 10pt; color: #444; margin-bottom: 1mm; }
   .time { font-size: 9pt; color: #888; margin-bottom: 4mm; }
   .divider { border-top: 1px dashed #bbb; margin: 3mm 0; }
   .label { font-size: 10pt; color: #555; margin-bottom: 1mm; }
@@ -56,7 +54,7 @@ function buildReceiptHtml({ amount, promptpayId, accountName, branchName, qrData
   <div class="baht">บาท</div>
   <div class="divider"></div>
   <div class="label">สแกนเพื่อชำระเงิน</div>
-  <div class="pp-badge">🇹🇭 PromptPay / พร้อมเพย์</div>
+  <div class="pp-badge">PromptPay / พร้อมเพย์</div>
   <div class="qr-wrap">
     <img src="${qrSrc}" />
   </div>
@@ -76,13 +74,51 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
   const [printed, setPrinted] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [accountInfo, setAccountInfo] = useState(null);
+  const [waitingPayment, setWaitingPayment] = useState(false);
+  const [autoDetected, setAutoDetected] = useState(false);
 
+  const pollRef = useRef(null);
   const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const startPolling = useCallback(() => {
+    if (!user?.branch_id || !amount) return;
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await paymentNotifyAPI.pending(user.branch_id, amount);
+        if (res?.found) {
+          stopPolling();
+          setAutoDetected(true);
+          setWaitingPayment(false);
+          handleAutoConfirm(res.notification?.bank_name);
+        }
+      } catch (_) {}
+    }, 3000);
+  }, [user?.branch_id, amount]);
+
+  const handleAutoConfirm = (bankName) => {
+    setConfirmed(true);
+    const amountText = Number(amount).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+    const bankTxt = bankName ? ` จาก ${bankName}` : '';
+    Speech.speak(`ได้รับเงินแล้ว จำนวน ${amountText} บาท${bankTxt}`, {
+      language: 'th-TH', rate: 0.9, pitch: 1.0,
+    });
+    setTimeout(() => onConfirm(), 600);
+  };
 
   const loadAndPrint = useCallback(async () => {
     setLoading(true);
     setPrinted(false);
     setConfirmed(false);
+    setAutoDetected(false);
+    setWaitingPayment(false);
     try {
       const accounts = await bankAccountAPI.list({ branch_id: user.branch_id });
       const pp = (accounts || []).find(a =>
@@ -95,13 +131,15 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
         const id = pp.account_number?.replace(/\D/g, '');
         const qrData = generatePayload(id, { amount: parseFloat(amount) });
         await doPrint(qrData, id, pp.account_name || pp.bank_name, user.branch_name);
+        setWaitingPayment(true);
+        startPolling();
       }
     } catch (e) {
       console.warn('print error', e);
     } finally {
       setLoading(false);
     }
-  }, [user.branch_id, user.branch_name, amount]);
+  }, [user.branch_id, user.branch_name, amount, startPolling]);
 
   const doPrint = async (qrData, promptpayId, accountName, branchName) => {
     setPrinting(true);
@@ -122,11 +160,17 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
   };
 
   useEffect(() => {
-    if (visible) loadAndPrint();
-    else Speech.stop();
+    if (visible) {
+      loadAndPrint();
+    } else {
+      stopPolling();
+      Speech.stop();
+    }
+    return () => stopPolling();
   }, [visible, amount]);
 
   const handleConfirm = () => {
+    stopPolling();
     setConfirmed(true);
     const amountText = Number(amount).toLocaleString('th-TH', { minimumFractionDigits: 2 });
     Speech.speak(`ได้รับเงินแล้ว จำนวน ${amountText} บาท`, {
@@ -135,14 +179,19 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
     setTimeout(() => onConfirm(), 600);
   };
 
+  const handleCancel = () => {
+    stopPolling();
+    onCancel();
+  };
+
   return (
     <Modal visible={visible} animationType="fade" transparent>
       <View style={s.overlay}>
         <View style={s.card}>
           {/* Header */}
           <View style={s.header}>
-            <Text style={s.title}>🔲 ชำระผ่านพร้อมเพย์</Text>
-            <TouchableOpacity onPress={onCancel} style={s.closeBtn}>
+            <Text style={s.title}>ชำระผ่านพร้อมเพย์</Text>
+            <TouchableOpacity onPress={handleCancel} style={s.closeBtn}>
               <Text style={s.closeTxt}>✕</Text>
             </TouchableOpacity>
           </View>
@@ -169,6 +218,13 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
                   ไม่พบบัญชีพร้อมเพย์{'\n'}ตั้งค่าได้ที่เมนู QR รับเงิน (หลังบ้าน)
                 </Text>
               </View>
+            ) : waitingPayment ? (
+              <View style={s.statusRow}>
+                <ActivityIndicator color="#f59e0b" size="small" />
+                <Text style={[s.statusTxt, { color: '#92400e' }]}>
+                  รอรับเงิน... (ตรวจสอบอัตโนมัติทุก 3 วิ)
+                </Text>
+              </View>
             ) : printed ? (
               <View style={s.statusRow}>
                 <Text style={{ fontSize: 20 }}>✅</Text>
@@ -176,6 +232,15 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
               </View>
             ) : null}
           </View>
+
+          {/* SMS tip */}
+          {waitingPayment && (
+            <View style={s.tipBox}>
+              <Text style={s.tipTxt}>
+                💡 ติดตั้งแอป SMS Notifier บนมือถือรับเงิน เพื่อยืนยันอัตโนมัติ
+              </Text>
+            </View>
+          )}
 
           {/* Actions */}
           {!loading && !printing && (
@@ -197,7 +262,7 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
                   <Text style={s.confirmTxt}>✓ ยืนยันรับเงินแล้ว</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity style={s.cancelBtn} onPress={onCancel}>
+              <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
                 <Text style={s.cancelTxt}>← ย้อนกลับ</Text>
               </TouchableOpacity>
             </View>
@@ -210,7 +275,7 @@ export default function QRPaymentModal({ visible, amount, onConfirm, onCancel })
 
 const s = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
-  card: { backgroundColor: '#fff', borderRadius: 20, padding: 24, width: 380, elevation: 20 },
+  card: { backgroundColor: '#fff', borderRadius: 20, padding: 24, width: 400, elevation: 20 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   title: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
   closeBtn: { padding: 4 },
@@ -218,9 +283,11 @@ const s = StyleSheet.create({
   amountBox: { backgroundColor: '#eff6ff', borderRadius: 14, padding: 18, alignItems: 'center', marginBottom: 16 },
   amountLabel: { fontSize: 13, color: '#64748b', marginBottom: 4 },
   amountVal: { fontSize: 36, fontWeight: 'bold', color: '#1e3a5f', fontVariant: ['tabular-nums'] },
-  statusBox: { minHeight: 48, justifyContent: 'center', marginBottom: 12 },
+  statusBox: { minHeight: 48, justifyContent: 'center', marginBottom: 8 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#f8fafc', borderRadius: 10, padding: 12 },
   statusTxt: { fontSize: 14, color: '#475569', flex: 1 },
+  tipBox: { backgroundColor: '#fffbeb', borderRadius: 10, padding: 10, marginBottom: 10 },
+  tipTxt: { fontSize: 12, color: '#92400e', lineHeight: 18 },
   actions: { gap: 10 },
   reprintBtn: { height: 44, borderRadius: 12, borderWidth: 1.5, borderColor: '#3b82f6', justifyContent: 'center', alignItems: 'center' },
   reprintTxt: { color: '#3b82f6', fontWeight: '600', fontSize: 15 },

@@ -46,6 +46,11 @@ export const shiftsAPI = {
   close: (id, data) => api.post(`/shifts/${id}/close`, data),
 };
 
+export const paymentNotifyAPI = {
+  pending: (branch_id, amount) =>
+    api.get('/payment-notify/pending', { params: { branch_id, amount } }),
+};
+
 export const scaleAPI = {
   ports: () => api.get('/scale/ports'),
   connect: (data) => api.post('/scale/connect', data),

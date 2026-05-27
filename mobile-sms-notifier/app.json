@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "SMS Notifier",
+    "slug": "sms-notifier",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#1e3a5f"
+    },
+    "android": {
+      "package": "com.posystem.smsnotifier",
+      "permissions": [
+        "android.permission.RECEIVE_SMS",
+        "android.permission.READ_SMS"
+      ]
+    },
+    "plugins": []
+  }
+}
