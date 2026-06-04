@@ -100,13 +100,13 @@ router.get('/:id', async (req, res, next) => {
 
 router.post('/', requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const { barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock } = req.body;
+    const { barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock, product_type, image_url } = req.body;
     if (!name) return res.status(400).json({ error: 'Product name required' });
 
     const result = await query(`
-      INSERT INTO products (barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
-    `, [barcode, name, description, category_id, unit || 'piece', is_weight || false, cost_price || 0, sell_price || 0, min_stock || 5]);
+      INSERT INTO products (barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock, product_type, image_url)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *
+    `, [barcode, name, description, category_id, unit || 'piece', is_weight || false, cost_price || 0, sell_price || 0, min_stock || 5, product_type || 'processed', image_url || null]);
 
     res.status(201).json(result.rows[0]);
   } catch (err) { next(err); }
@@ -114,12 +114,13 @@ router.post('/', requireRole('admin', 'manager'), async (req, res, next) => {
 
 router.put('/:id', requireRole('admin', 'manager'), async (req, res, next) => {
   try {
-    const { barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock, is_active } = req.body;
+    const { barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock, is_active, product_type, image_url } = req.body;
     const result = await query(`
       UPDATE products SET barcode=$1, name=$2, description=$3, category_id=$4, unit=$5,
-        is_weight=$6, cost_price=$7, sell_price=$8, min_stock=$9, is_active=$10, updated_at=NOW()
-      WHERE id=$11 RETURNING *
-    `, [barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock, is_active, req.params.id]);
+        is_weight=$6, cost_price=$7, sell_price=$8, min_stock=$9, is_active=$10,
+        product_type=$11, image_url=$12, updated_at=NOW()
+      WHERE id=$13 RETURNING *
+    `, [barcode, name, description, category_id, unit, is_weight, cost_price, sell_price, min_stock, is_active, product_type || 'processed', image_url ?? null, req.params.id]);
 
     if (!result.rows.length) return res.status(404).json({ error: 'Product not found' });
     res.json(result.rows[0]);

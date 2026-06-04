@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { productAPI, uploadAPI } from '../services/api';
+import { productAPI } from '../services/api';
 import toast from 'react-hot-toast';
 import { Plus, Edit2, Trash2, Search, RefreshCw, ImagePlus, X } from 'lucide-react';
 
@@ -61,14 +61,7 @@ function ProductModal({ product, onClose, onSave }) {
     e.preventDefault();
     setLoading(true);
     try {
-      let data = { ...form };
-      // If image is still a local base64 (not yet uploaded), upload it first
-      if (data.image_url && data.image_url.startsWith('data:image')) {
-        toast.loading('กำลังอัพโหลดรูป...', { id: 'img-upload' });
-        const { url } = await uploadAPI.upload(data.image_url);
-        toast.dismiss('img-upload');
-        data = { ...data, image_url: url };
-      }
+      const data = { ...form };
       if (product?.id) {
         await productAPI.update(product.id, data);
         toast.success('อัปเดตสินค้าสำเร็จ');
@@ -78,7 +71,6 @@ function ProductModal({ product, onClose, onSave }) {
       }
       onSave();
     } catch (err) {
-      toast.dismiss('img-upload');
       toast.error(err.error || 'เกิดข้อผิดพลาด');
     } finally { setLoading(false); }
   };
