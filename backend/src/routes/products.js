@@ -6,21 +6,40 @@ router.use(auth);
 
 router.get('/', async (req, res, next) => {
   try {
-    const { search, category_id, is_weight, branch_id, page = 1, limit = 50 } = req.query;
-    const branchId = branch_id || req.user.branch_id || 1;
+    const { search, category_id, is_weight, branch_id, product_type, page = 1, limit = 50 } = req.query;
+    const branchId = parseInt(branch_id || req.user.branch_id || 1);
+
+    // whereParams: params for WHERE conditions ($1, $2, ...)
+    // branchId is added LAST so no gaps in $N sequence
     const conditions = ['p.is_active = true'];
-    const params = [branchId];
+    const whereParams = [];
 
     if (search) {
-      params.push(`%${search}%`);
-      conditions.push(`(p.name ILIKE $${params.length} OR p.barcode ILIKE $${params.length})`);
+      whereParams.push(`%${search}%`);
+      conditions.push(`(p.name ILIKE $${whereParams.length} OR p.barcode ILIKE $${whereParams.length})`);
     }
-    if (category_id) { params.push(category_id); conditions.push(`p.category_id = $${params.length}`); }
-    if (is_weight !== undefined && is_weight !== '') { params.push(is_weight === 'true'); conditions.push(`p.is_weight = $${params.length}`); }
+    if (category_id) {
+      whereParams.push(category_id);
+      conditions.push(`p.category_id = $${whereParams.length}`);
+    }
+    if (is_weight !== undefined && is_weight !== '') {
+      whereParams.push(is_weight === 'true');
+      conditions.push(`p.is_weight = $${whereParams.length}`);
+    }
+    if (product_type) {
+      whereParams.push(product_type);
+      conditions.push(`p.product_type = $${whereParams.length}`);
+    }
 
-    const filterParams = [...params];
+    const whereClause = conditions.join(' AND ');
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    params.push(parseInt(limit), offset);
+
+    // selectParams = [...whereParams, limit, offset, branchId]
+    // branchId must come LAST so all $N references are contiguous
+    const selectParams = [...whereParams, parseInt(limit), offset, branchId];
+    const limitIdx = selectParams.length - 2;
+    const offsetIdx = selectParams.length - 1;
+    const branchIdx = selectParams.length;
 
     const result = await query(`
       SELECT p.*, c.name as category_name,
@@ -28,16 +47,17 @@ router.get('/', async (req, res, next) => {
         COALESCE(sb.quantity, 0) as back_stock
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      LEFT JOIN stock sf ON sf.product_id = p.id AND sf.location = 'front' AND sf.branch_id = $1
-      LEFT JOIN stock sb ON sb.product_id = p.id AND sb.location = 'back' AND sb.branch_id = $1
-      WHERE ${conditions.join(' AND ')}
+      LEFT JOIN stock sf ON sf.product_id = p.id AND sf.location = 'front' AND sf.branch_id = $${branchIdx}
+      LEFT JOIN stock sb ON sb.product_id = p.id AND sb.location = 'back' AND sb.branch_id = $${branchIdx}
+      WHERE ${whereClause}
       ORDER BY p.name
-      LIMIT $${params.length - 1} OFFSET $${params.length}
-    `, params);
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+    `, selectParams);
 
+    // COUNT uses whereParams only — no branchId, no limit/offset
     const countResult = await query(
-      `SELECT COUNT(*) FROM products p WHERE ${conditions.join(' AND ')}`,
-      filterParams
+      `SELECT COUNT(*) FROM products p WHERE ${whereClause}`,
+      whereParams
     );
 
     res.json({ products: result.rows, total: parseInt(countResult.rows[0].count), page: parseInt(page), limit: parseInt(limit) });
