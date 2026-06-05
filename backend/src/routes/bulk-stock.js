@@ -34,11 +34,12 @@ router.post('/items', auth, async (req, res, next) => {
 
 router.put('/items/:id', auth, async (req, res, next) => {
   try {
-    const { name, unit, category, min_qty, notes, is_active } = req.body;
+    const { name, unit, category, min_qty, notes, is_active, cost_per_unit } = req.body;
     const r = await query(
-      `UPDATE bulk_items SET name=$1, unit=$2, category=$3, min_qty=$4, notes=$5, is_active=$6
-       WHERE id=$7 RETURNING *`,
-      [name, unit || 'kg', category || null, min_qty || 0, notes || null, is_active !== false, req.params.id]
+      `UPDATE bulk_items SET name=$1, unit=$2, category=$3, min_qty=$4, notes=$5, is_active=$6,
+       cost_per_unit = CASE WHEN $7::TEXT IS NOT NULL AND $7::TEXT != '' THEN $7::DECIMAL ELSE cost_per_unit END
+       WHERE id=$8 RETURNING *`,
+      [name, unit || 'kg', category || null, min_qty || 0, notes || null, is_active !== false, cost_per_unit != null ? String(cost_per_unit) : null, req.params.id]
     );
     if (!r.rows[0]) return res.status(404).json({ error: 'ไม่พบรายการ' });
     res.json(r.rows[0]);
@@ -130,7 +131,7 @@ router.post('/processing', auth, async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { bulk_item_id, input_qty, outputs, notes, branch_id, depreciation_cost } = req.body;
+    const { bulk_item_id, input_qty, outputs, notes, branch_id } = req.body;
     if (!bulk_item_id || !input_qty || !outputs?.length) throw { status: 400, error: 'ข้อมูลไม่ครบ' };
     const branchId = branch_id || req.user.branch_id || 1;
 
@@ -148,8 +149,7 @@ router.post('/processing', auth, async (req, res, next) => {
     const processNumber = `${prefix}-${String(seq).padStart(3,'0')}`;
 
     const costPerUnit = parseFloat(bulkItem.rows[0].cost_per_unit || 0);
-    const depCost = parseFloat(depreciation_cost || 0);
-    const totalInputCost = inQty * costPerUnit + depCost;
+    const totalInputCost = inQty * costPerUnit;
 
     // Calculate outputs
     let totalOutputQty = 0;

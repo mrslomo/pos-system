@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { productAPI, salesAPI, heldBillAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { Plus, Minus, Trash2, Scale, X, Search, Printer, PauseCircle, PlayCircle, Clock } from 'lucide-react';
+import { Plus, Minus, Trash2, Scale, X, Search, Printer, PauseCircle, PlayCircle, Clock, Package } from 'lucide-react';
 import { io } from 'socket.io-client';
 
 export default function POSPage() {
@@ -11,12 +11,14 @@ export default function POSPage() {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [discount, setDiscount] = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [paymentAmount, setPaymentAmount] = useState('');
+  const [payments, setPayments] = useState([{ method: 'cash', amount: '' }]);
   const [scaleWeight, setScaleWeight] = useState(0);
   const [lastReceipt, setLastReceipt] = useState(null);
   const [processing, setProcessing] = useState(false);
   const [weightProduct, setWeightProduct] = useState(null);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [allProducts, setAllProducts] = useState([]);
+  const [typeFilter, setTypeFilter] = useState('');
 
   // Hold bill
   const [showHoldModal, setShowHoldModal] = useState(false);
@@ -32,12 +34,26 @@ export default function POSPage() {
 
   const subtotal = cart.reduce((s, i) => s + i.unit_price * i.quantity, 0);
   const total = Math.max(0, subtotal - discount);
-  const change = paymentMethod === 'cash' ? Math.max(0, parseFloat(paymentAmount || 0) - total) : 0;
+  const totalPaid = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  const hasCash = payments.some(p => p.method === 'cash' && parseFloat(p.amount) > 0);
+  const change = hasCash ? Math.max(0, totalPaid - total) : 0;
+  const remaining = Math.max(0, total - totalPaid);
+
+  const PAYMENT_LABELS = { cash: '💵 เงินสด', card: '💳 บัตร', promptpay: '📱 พร้อมเพย์', konlakrueng: '🎫 คนละครึ่ง' };
+  const addPayment = () => setPayments(prev => [...prev, { method: 'cash', amount: '' }]);
+  const removePayment = (i) => setPayments(prev => prev.filter((_, idx) => idx !== i));
+  const updatePayment = (i, field, val) => setPayments(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p));
 
   useEffect(() => {
     const socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000');
     socket.on('scale-weight', ({ weight }) => setScaleWeight(weight));
     return () => socket.disconnect();
+  }, []);
+
+  useEffect(() => {
+    productAPI.all({ limit: 200, page: 1 })
+      .then(r => setAllProducts(r.products || []))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -93,7 +109,7 @@ export default function POSPage() {
 
   const removeItem = (product_id) => setCart(prev => prev.filter(i => i.product_id !== product_id));
 
-  const clearCart = () => { setCart([]); setDiscount(0); setPaymentAmount(''); setCustomerName(''); };
+  const clearCart = () => { setCart([]); setDiscount(0); setPayments([{ method: 'cash', amount: '' }]); setCustomerName(''); };
 
   // ─── Hold Bill ───────────────────────────────────────────────────────────────
   const handleHold = async () => {
@@ -148,17 +164,29 @@ export default function POSPage() {
   // ─── Checkout ────────────────────────────────────────────────────────────────
   const handleCheckout = async () => {
     if (!cart.length) return toast.error('ไม่มีสินค้าในตะกร้า');
-    if (paymentMethod === 'cash' && parseFloat(paymentAmount || 0) < total) return toast.error('รับเงินไม่ครบ');
+    if (totalPaid < total) return toast.error(`รับเงินไม่ครบ (ขาดอีก ฿${fmt(remaining)})`);
     setProcessing(true);
     try {
+      const primaryMethod = payments.length === 1 ? payments[0].method : 'split';
+      const splitNote = payments.length > 1
+        ? payments.filter(p => parseFloat(p.amount) > 0).map(p => `${PAYMENT_LABELS[p.method]||p.method} ฿${fmt(parseFloat(p.amount))}`).join(' + ')
+        : '';
       const sale = await salesAPI.create({
         branch_id: user.branch_id,
         items: cart.map(i => ({ product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price })),
         discount_amount: discount,
-        payment_method: paymentMethod,
-        payment_amount: parseFloat(paymentAmount) || total,
+        payment_method: primaryMethod,
+        payment_amount: totalPaid,
+        notes: splitNote || undefined,
       });
-      setLastReceipt(sale);
+      const receiptData = {
+        ...sale,
+        items: cart.map(i => ({ product_name: i.name, quantity: i.quantity, unit_price: i.unit_price, subtotal: i.unit_price * i.quantity })),
+        cashier_name: user.name,
+        payments: payments.filter(p => parseFloat(p.amount) > 0),
+      };
+      setLastReceipt(receiptData);
+      setShowReceiptModal(true);
       clearCart();
       toast.success(`บิล ${sale.receipt_number} สำเร็จ`);
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); }
@@ -166,6 +194,49 @@ export default function POSPage() {
   };
 
   const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+
+  const printReceipt = (receipt) => {
+    const METHODS = { cash: 'เงินสด', card: 'บัตร', promptpay: 'พร้อมเพย์', konlakrueng: 'คนละครึ่ง', split: 'ชำระผสม' };
+    const fmtB = (n) => `฿${Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2})}`;
+    const w = window.open('', '_blank', 'width=340,height=700');
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>ใบเสร็จ</title>
+    <style>
+      @page{margin:0;size:80mm auto}*{box-sizing:border-box}
+      body{font-family:'Courier New',monospace;width:80mm;margin:0 auto;padding:8px 6px;font-size:13px;color:#000}
+      .c{text-align:center}.b{font-weight:bold}.lg{font-size:16px}
+      .dash{border-top:1px dashed #000;margin:6px 0}
+      .row{display:flex;justify-content:space-between;margin:2px 0}
+      .sub{font-size:11px;color:#555;margin-left:8px;margin-bottom:3px}
+      .ttl{font-weight:bold;font-size:15px}
+      @media print{button{display:none}}
+    </style></head><body>
+    <div class="c b lg">POS SYSTEM</div>
+    <div class="c">สาขาหลัก</div>
+    <div class="c" style="font-size:11px;color:#666">${new Date(receipt.created_at).toLocaleString('th-TH')}</div>
+    <div class="dash"></div>
+    <div class="row"><span>เลขที่:</span><span class="b">${receipt.receipt_number}</span></div>
+    <div class="row"><span>พนักงาน:</span><span>${receipt.cashier_name||'-'}</span></div>
+    <div class="dash"></div>
+    ${(receipt.items||[]).map(it=>`
+      <div class="row"><span style="flex:1">${it.product_name}</span><span>${fmtB(it.subtotal)}</span></div>
+      <div class="sub">${Number(it.quantity).toFixed(3)} × ${fmtB(it.unit_price)}</div>
+    `).join('')}
+    <div class="dash"></div>
+    <div class="row"><span>ยอดรวม</span><span>${fmtB(receipt.subtotal||receipt.total_amount)}</span></div>
+    ${Number(receipt.discount_amount)>0?`<div class="row"><span>ส่วนลด</span><span>-${fmtB(receipt.discount_amount)}</span></div>`:''}
+    <div class="row ttl"><span>ยอดสุทธิ</span><span>${fmtB(receipt.total_amount)}</span></div>
+    <div class="dash"></div>
+    ${receipt.payments&&receipt.payments.length>1
+      ? receipt.payments.filter(p=>parseFloat(p.amount)>0).map(p=>`<div class="row"><span>${METHODS[p.method]||p.method}</span><span>${fmtB(p.amount)}</span></div>`).join('')
+      : `<div class="row"><span>${METHODS[receipt.payment_method]||receipt.payment_method}</span><span>${fmtB(receipt.payment_amount)}</span></div>`}
+    ${Number(receipt.change_amount)>0?`<div class="row"><span>เงินทอน</span><span>${fmtB(receipt.change_amount)}</span></div>`:''}
+    <div class="dash"></div>
+    <div class="c" style="margin-top:8px">ขอบคุณที่ใช้บริการ</div>
+    <br><br>
+    <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),800)}</script>
+    </body></html>`);
+    w.document.close();
+  };
 
   const remainingMins = (expiresAt) => {
     const diff = new Date(expiresAt) - new Date();
@@ -212,6 +283,46 @@ export default function POSPage() {
             </div>
           )}
         </div>
+
+        {/* Product Grid */}
+        {!search.trim() && (
+          <div className="card mb-3 p-3">
+            <div className="flex gap-1 mb-3 bg-gray-100 rounded-lg p-1">
+              {[['', 'ทั้งหมด'], ['fresh', 'ของสด'], ['innards', 'เครื่องใน'], ['processed', 'แปรรูป']].map(([v, l]) => (
+                <button key={v} onClick={() => setTypeFilter(v)}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all ${typeFilter === v ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-4 gap-2 max-h-56 overflow-y-auto pr-1">
+              {allProducts.filter(p => !typeFilter || p.product_type === typeFilter).map(p => {
+                const stock = parseFloat(p.front_stock || 0) + parseFloat(p.back_stock || 0);
+                return (
+                  <button key={p.id}
+                    onClick={() => p.is_weight ? setWeightProduct(p) : addToCart(p)}
+                    className="flex flex-col rounded-lg border-2 border-transparent hover:border-blue-300 bg-gray-50 hover:bg-blue-50 transition-all overflow-hidden text-left shadow-sm">
+                    <div className="w-full h-16 bg-gray-100 flex items-center justify-center overflow-hidden">
+                      {p.image_url
+                        ? <img src={p.image_url} alt="" className="w-full h-full object-cover" />
+                        : <Package size={20} className="text-gray-300" />}
+                    </div>
+                    <div className="p-1.5">
+                      <p className="text-xs font-semibold leading-tight line-clamp-1 text-gray-800">{p.name}</p>
+                      <p className="text-xs font-bold text-blue-600">฿{fmt(p.sell_price)}</p>
+                      <span className={`text-xs ${stock <= 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                        {fmt(stock, 0)} {p.unit}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+              {allProducts.filter(p => !typeFilter || p.product_type === typeFilter).length === 0 && (
+                <div className="col-span-4 py-8 text-center text-gray-400 text-sm">ไม่พบสินค้า</div>
+              )}
+            </div>
+          </div>
+        )}
 
         {weightProduct && (
           <div className="card mb-3 bg-blue-50 border-blue-200">
@@ -296,30 +407,59 @@ export default function POSPage() {
           </div>
 
           <div className="mt-4">
-            <p className="text-sm text-gray-500 mb-2">วิธีชำระเงิน</p>
-            <div className="grid grid-cols-3 gap-2">
-              {[['cash','เงินสด'],['card','บัตร'],['promptpay','พร้อมเพย์']].map(([v,l]) => (
-                <button key={v} onClick={() => setPaymentMethod(v)}
-                  className={`py-2 rounded-lg text-xs font-medium border transition-all ${paymentMethod === v ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:border-blue-300'}`}>
-                  {l}
-                </button>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-700">ช่องทางชำระเงิน</p>
+              <button onClick={addPayment} className="text-xs text-blue-600 hover:text-blue-700 font-medium">+ เพิ่มช่องทาง</button>
+            </div>
+            <div className="space-y-2">
+              {payments.map((p, i) => (
+                <div key={i} className="flex gap-1.5 items-center">
+                  <select value={p.method} onChange={e => updatePayment(i, 'method', e.target.value)}
+                    className="input text-sm flex-1 py-1.5">
+                    <option value="cash">💵 เงินสด</option>
+                    <option value="card">💳 บัตร</option>
+                    <option value="promptpay">📱 พร้อมเพย์</option>
+                    <option value="konlakrueng">🎫 คนละครึ่ง</option>
+                  </select>
+                  <input type="number" value={p.amount} onChange={e => updatePayment(i, 'amount', e.target.value)}
+                    className="input text-sm w-24 text-right py-1.5" placeholder="0.00" min="0" step="0.01" />
+                  {payments.length > 1 && (
+                    <button onClick={() => removePayment(i)} className="text-red-400 hover:text-red-600 text-lg leading-none px-1">×</button>
+                  )}
+                </div>
               ))}
             </div>
-          </div>
 
-          {paymentMethod === 'cash' && (
-            <div className="mt-3">
-              <label className="text-sm text-gray-500">รับเงิน</label>
-              <input type="number" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
-                className="input mt-1" placeholder="0.00" />
-              {paymentAmount && (
-                <div className="flex justify-between mt-2 text-sm">
-                  <span className="text-gray-500">เงินทอน</span>
-                  <span className={`font-bold ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>฿{fmt(change)}</span>
+            {/* Quick fill */}
+            {total > 0 && (
+              <button onClick={() => setPayments(prev => prev.map((p, i) => i === 0 ? { ...p, amount: String(total) } : p))}
+                className="mt-2 text-xs text-gray-500 hover:text-blue-600 underline">
+                กรอกพอดี ฿{fmt(total)}
+              </button>
+            )}
+
+            {/* Summary */}
+            {totalPaid > 0 && (
+              <div className="mt-2 bg-gray-50 rounded-lg p-2 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">รับเงินรวม</span>
+                  <span className="font-medium">฿{fmt(totalPaid)}</span>
                 </div>
-              )}
-            </div>
-          )}
+                {remaining > 0 && (
+                  <div className="flex justify-between text-red-500 font-semibold">
+                    <span>ยังขาดอีก</span>
+                    <span>฿{fmt(remaining)}</span>
+                  </div>
+                )}
+                {change > 0 && (
+                  <div className="flex justify-between text-green-600 font-bold">
+                    <span>เงินทอน</span>
+                    <span>฿{fmt(change)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Action buttons */}
@@ -334,19 +474,22 @@ export default function POSPage() {
           </button>
         </div>
 
-        <button onClick={handleCheckout} disabled={!cart.length || processing}
-          className="btn-success py-4 text-base font-bold w-full">
-          {processing ? 'กำลังดำเนินการ...' : `ชำระเงิน ฿${fmt(total)}`}
+        <button onClick={handleCheckout} disabled={!cart.length || processing || (totalPaid < total && totalPaid > 0) || (cart.length > 0 && totalPaid === 0)}
+          className={`py-4 text-base font-bold w-full rounded-lg transition-all ${remaining > 0 && totalPaid > 0 ? 'bg-red-400 cursor-not-allowed text-white' : 'btn-success'}`}>
+          {processing ? 'กำลังดำเนินการ...' : remaining > 0 && totalPaid > 0 ? `ขาดอีก ฿${fmt(remaining)}` : `ชำระเงิน ฿${fmt(total)}`}
         </button>
 
         {lastReceipt && (
-          <div className="card bg-green-50 border-green-200 py-3">
-            <div className="flex items-center gap-2 text-green-700 mb-1">
-              <Printer size={14} />
-              <span className="text-sm font-medium">บิลล่าสุด</span>
+          <div className="card bg-green-50 border-green-200 py-2 px-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-green-600 font-mono font-bold">{lastReceipt.receipt_number}</p>
+                <p className="text-xs text-gray-500">฿{fmt(lastReceipt.total_amount)}</p>
+              </div>
+              <button onClick={() => { setShowReceiptModal(true); }} className="flex items-center gap-1 text-xs text-green-700 hover:text-green-900 px-2 py-1 bg-green-100 rounded-lg">
+                <Printer size={12} /> ปริ้น
+              </button>
             </div>
-            <p className="text-xs text-green-600 font-mono">{lastReceipt.receipt_number}</p>
-            <p className="text-xs text-gray-500">฿{fmt(lastReceipt.total_amount)}</p>
           </div>
         )}
       </div>
@@ -379,6 +522,35 @@ export default function POSPage() {
               <button onClick={() => setShowHoldModal(false)} className="btn-secondary flex-1">ยกเลิก</button>
               <button onClick={handleHold} disabled={holdLoading} className="flex-1 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white font-medium text-sm disabled:opacity-50">
                 {holdLoading ? 'กำลัง Hold...' : 'Hold บิล'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Receipt Modal ──────────────────────────── */}
+      {showReceiptModal && lastReceipt && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="text-3xl">✓</span>
+              </div>
+              <h2 className="text-xl font-bold text-gray-800">ชำระเงินสำเร็จ!</h2>
+              <p className="text-gray-400 text-sm font-mono mt-1">{lastReceipt.receipt_number}</p>
+              <p className="text-3xl font-bold text-blue-600 mt-2">฿{fmt(lastReceipt.total_amount)}</p>
+              {Number(lastReceipt.change_amount) > 0 && (
+                <p className="text-green-600 text-sm mt-1">เงินทอน ฿{fmt(lastReceipt.change_amount)}</p>
+              )}
+            </div>
+            <div className="border-t px-4 pb-4 grid grid-cols-2 gap-3">
+              <button onClick={() => setShowReceiptModal(false)}
+                className="py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-all">
+                ไม่ปริ้น
+              </button>
+              <button onClick={() => { printReceipt(lastReceipt); setShowReceiptModal(false); }}
+                className="py-3 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 transition-all flex items-center justify-center gap-2">
+                <Printer size={16} /> ปริ้นใบเสร็จ
               </button>
             </div>
           </div>

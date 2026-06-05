@@ -12,7 +12,9 @@ function BulkItemsTab({ user }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [showStockIn, setShowStockIn] = useState(null); // bulk_item
+  const [showStockIn, setShowStockIn] = useState(null);
+  const [showEditCost, setShowEditCost] = useState(null); // bulk_item to edit cost
+  const [editCostValue, setEditCostValue] = useState('');
   const [form, setForm] = useState({ name: '', unit: 'kg', category: '', min_qty: 0, notes: '' });
   const [stockInForm, setStockInForm] = useState({ quantity: '', cost_per_unit: '', supplier_name: '', reference: '', notes: '' });
   const [saving, setSaving] = useState(false);
@@ -26,6 +28,16 @@ function BulkItemsTab({ user }) {
     try {
       await bulkStockAPI.createItem({ ...form, branch_id: user.branch_id });
       toast.success('เพิ่มรายการสำเร็จ'); setShowCreate(false); setForm({ name: '', unit: 'kg', category: '', min_qty: 0, notes: '' }); load();
+    } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
+  };
+
+  const handleEditCost = async () => {
+    if (!editCostValue || parseFloat(editCostValue) <= 0) return toast.error('ระบุราคาต้นทุนที่ถูกต้อง');
+    setSaving(true);
+    try {
+      await bulkStockAPI.updateItem(showEditCost.id, { cost_per_unit: parseFloat(editCostValue) });
+      toast.success(`แก้ไขต้นทุน ${showEditCost.name} เป็น ฿${editCostValue}/kg`);
+      setShowEditCost(null); setEditCostValue(''); load();
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
   };
 
@@ -59,7 +71,14 @@ function BulkItemsTab({ user }) {
             </div>
             <div className="space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-gray-500">คงเหลือ</span><span className="font-bold text-lg text-blue-600">{fmt(item.current_qty, 3)} {item.unit}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">ต้นทุน/หน่วย</span><span>฿{fmt(item.cost_per_unit)}</span></div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500">ต้นทุน/{item.unit}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">฿{fmt(item.cost_per_unit)}</span>
+                  <button onClick={() => { setShowEditCost(item); setEditCostValue(String(item.cost_per_unit)); }}
+                    className="text-xs text-orange-600 hover:text-orange-700 underline">แก้ไข</button>
+                </div>
+              </div>
               <div className="flex justify-between"><span className="text-gray-500">มูลค่าสต๊อก</span><span className="font-medium">฿{fmt(parseFloat(item.current_qty) * parseFloat(item.cost_per_unit))}</span></div>
             </div>
             <button onClick={() => setShowStockIn(item)} className="btn-primary text-sm w-full mt-3 flex items-center justify-center gap-1">
@@ -86,6 +105,34 @@ function BulkItemsTab({ user }) {
             <div className="p-5 border-t flex gap-3 justify-end">
               <button onClick={() => setShowCreate(false)} className="btn-secondary">ยกเลิก</button>
               <button onClick={handleCreate} disabled={saving} className="btn-primary">{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Cost */}
+      {showEditCost && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
+            <div className="flex items-center justify-between p-5 border-b">
+              <h2 className="font-semibold text-lg">แก้ไขต้นทุน — {showEditCost.name}</h2>
+              <button onClick={() => setShowEditCost(null)}><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-yellow-50 rounded-lg p-3 text-sm text-yellow-800">
+                ต้นทุนปัจจุบัน: <strong>฿{fmt(showEditCost.cost_per_unit)}/{showEditCost.unit}</strong>
+                <br /><span className="text-xs">การแก้ไขจะมีผลกับการคำนวณซอยสต๊อกครั้งต่อไป</span>
+              </div>
+              <div>
+                <label className="label">ต้นทุนใหม่ต่อ{showEditCost.unit} (฿) *</label>
+                <input type="number" className="input" value={editCostValue}
+                  onChange={e => setEditCostValue(e.target.value)}
+                  placeholder="0.00" step="0.01" min="0" autoFocus />
+              </div>
+            </div>
+            <div className="p-5 border-t flex gap-3 justify-end">
+              <button onClick={() => setShowEditCost(null)} className="btn-secondary">ยกเลิก</button>
+              <button onClick={handleEditCost} disabled={saving} className="btn-primary">{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
             </div>
           </div>
         </div>
@@ -138,7 +185,7 @@ function ProcessingTab({ user }) {
   const [inputQty, setInputQty] = useState('');
   const [outputs, setOutputs] = useState([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]);
   const [procNotes, setProcNotes] = useState('');
-  const [depreciationCost, setDepreciationCost] = useState('');
+  const [spoiledQty, setSpoiledQty] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = () => { setLoading(true); bulkStockAPI.processingList({ branch_id: user.branch_id }).then(setList).catch(() => {}).finally(() => setLoading(false)); };
@@ -153,18 +200,20 @@ function ProcessingTab({ user }) {
   const removeOutput = (i) => setOutputs(prev => prev.filter((_, idx) => idx !== i));
 
   const totalOutput = outputs.reduce((s, o) => s + (parseFloat(o.quantity) || 0), 0);
-  const wasteQty = Math.max(0, (parseFloat(inputQty) || 0) - totalOutput);
-  const wastePct = parseFloat(inputQty) > 0 ? (wasteQty / parseFloat(inputQty) * 100).toFixed(1) : 0;
-  const rawInputCost = selectedBulk ? parseFloat(selectedBulk.cost_per_unit || 0) * (parseFloat(inputQty) || 0) : 0;
-  const totalInputCost = rawInputCost + (parseFloat(depreciationCost) || 0);
+  const spoiledQtyNum = parseFloat(spoiledQty) || 0;
+  const wasteQty = Math.max(0, (parseFloat(inputQty) || 0) - totalOutput - spoiledQtyNum);
+  const wastePct = parseFloat(inputQty) > 0 ? ((wasteQty + spoiledQtyNum) / parseFloat(inputQty) * 100).toFixed(1) : 0;
+  const totalInputCost = selectedBulk ? parseFloat(selectedBulk.cost_per_unit || 0) * (parseFloat(inputQty) || 0) : 0;
 
   const handleCreate = async () => {
     if (!selectedBulk || !inputQty || outputs.some(o => !o.output_name || !o.quantity)) return toast.error('กรุณากรอกข้อมูลให้ครบ');
     setSaving(true);
     try {
-      await bulkStockAPI.processingCreate({ bulk_item_id: selectedBulk.id, input_qty: parseFloat(inputQty), outputs: outputs.map(o => ({ ...o, quantity: parseFloat(o.quantity), product_id: o.product_id || null, sell_price: parseFloat(o.sell_price) || 0 })), notes: procNotes, branch_id: user.branch_id, depreciation_cost: parseFloat(depreciationCost) || 0 });
+      const allOutputs = [...outputs.map(o => ({ ...o, quantity: parseFloat(o.quantity), product_id: o.product_id || null, sell_price: parseFloat(o.sell_price) || 0 }))];
+      if (spoiledQtyNum > 0) allOutputs.push({ output_name: 'สินค้าเสื่อม', quantity: spoiledQtyNum, unit: selectedBulk.unit || 'kg', product_id: null, sell_price: 0 });
+      await bulkStockAPI.processingCreate({ bulk_item_id: selectedBulk.id, input_qty: parseFloat(inputQty), outputs: allOutputs, notes: procNotes, branch_id: user.branch_id });
       toast.success('บันทึกการซอยสำเร็จ');
-      setShowCreate(false); setSelectedBulk(null); setInputQty(''); setOutputs([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]); setProcNotes(''); setDepreciationCost('');
+      setShowCreate(false); setSelectedBulk(null); setInputQty(''); setOutputs([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]); setProcNotes(''); setSpoiledQty('');
       load();
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
   };
@@ -232,24 +281,24 @@ function ProcessingTab({ user }) {
                 </div>
               </div>
 
-              {/* ค่าเสื่อม */}
+              {/* สินค้าเสื่อม */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">ค่าเสื่อม / ต้นทุนเพิ่มเติม (บาท)</label>
-                  <input type="number" className="input" value={depreciationCost}
-                    onChange={e => setDepreciationCost(e.target.value)}
-                    placeholder="0.00" step="0.01" min="0" />
-                  <p className="text-xs text-gray-400 mt-0.5">เช่น ค่าแรง ค่าซอย มูลค่าส่วนที่เสียหาย</p>
+                  <label className="label">สินค้าเสื่อม ({selectedBulk?.unit || 'kg'})</label>
+                  <input type="number" className="input" value={spoiledQty}
+                    onChange={e => setSpoiledQty(e.target.value)}
+                    placeholder="0.000" step="0.001" min="0" />
+                  <p className="text-xs text-gray-400 mt-0.5">สินค้าที่เสีย/เน่า ก่อนหรือระหว่างซอย</p>
                 </div>
                 <div />
               </div>
 
               {selectedBulk && inputQty && (
                 <div className="grid grid-cols-4 gap-3 bg-gray-50 rounded-lg p-3 text-sm">
-                  <div><p className="text-gray-500">ต้นทุนวัตถุดิบ</p><p className="font-bold text-gray-700">฿{fmt(rawInputCost)}</p></div>
-                  <div><p className="text-gray-500">ค่าเสื่อม</p><p className={`font-bold ${parseFloat(depreciationCost) > 0 ? 'text-orange-500' : 'text-gray-400'}`}>฿{fmt(parseFloat(depreciationCost) || 0)}</p></div>
                   <div><p className="text-gray-500">ต้นทุนรวม</p><p className="font-bold text-blue-600">฿{fmt(totalInputCost)}</p></div>
-                  <div><p className="text-gray-500">ซอยออก</p><p className={`font-bold ${wasteQty > 0 ? 'text-red-600' : 'text-gray-600'}`}>{fmt(wasteQty, 3)} {selectedBulk.unit} ({wastePct}%)</p></div>
+                  <div><p className="text-gray-500">ผลผลิตรวม</p><p className="font-bold text-green-600">{fmt(totalOutput, 3)} {selectedBulk.unit}</p></div>
+                  <div><p className="text-gray-500">สินค้าเสื่อม</p><p className={`font-bold ${spoiledQtyNum > 0 ? 'text-orange-500' : 'text-gray-400'}`}>{fmt(spoiledQtyNum, 3)} {selectedBulk.unit}</p></div>
+                  <div><p className="text-gray-500">ซอยออก</p><p className={`font-bold ${wasteQty > 0 ? 'text-red-600' : 'text-gray-600'}`}>{fmt(wasteQty, 3)} {selectedBulk.unit}</p></div>
                 </div>
               )}
 
