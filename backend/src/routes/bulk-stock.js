@@ -73,7 +73,13 @@ router.post('/stock-in', auth, async (req, res, next) => {
       [bulk_item_id, qty, cost, qty * cost, supplier_name || null, reference || null, req.user.id, notes || null]
     );
     const r = await client.query(
-      `UPDATE bulk_items SET current_qty = current_qty + $1, cost_per_unit = ROUND(($2::DECIMAL + cost_per_unit)/2, 2)
+      `UPDATE bulk_items
+       SET current_qty = current_qty + $1,
+           cost_per_unit = ROUND(
+             CASE WHEN current_qty + $1 > 0
+               THEN (current_qty * cost_per_unit + $1 * $2) / (current_qty + $1)
+               ELSE $2
+             END, 2)
        WHERE id=$3 RETURNING *`,
       [qty, cost, bulk_item_id]
     );
@@ -124,7 +130,7 @@ router.post('/processing', auth, async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { bulk_item_id, input_qty, outputs, notes, branch_id } = req.body;
+    const { bulk_item_id, input_qty, outputs, notes, branch_id, depreciation_cost } = req.body;
     if (!bulk_item_id || !input_qty || !outputs?.length) throw { status: 400, error: 'ข้อมูลไม่ครบ' };
     const branchId = branch_id || req.user.branch_id || 1;
 
@@ -142,7 +148,8 @@ router.post('/processing', auth, async (req, res, next) => {
     const processNumber = `${prefix}-${String(seq).padStart(3,'0')}`;
 
     const costPerUnit = parseFloat(bulkItem.rows[0].cost_per_unit || 0);
-    const totalInputCost = inQty * costPerUnit;
+    const depCost = parseFloat(depreciation_cost || 0);
+    const totalInputCost = inQty * costPerUnit + depCost;
 
     // Calculate outputs
     let totalOutputQty = 0;

@@ -138,6 +138,7 @@ function ProcessingTab({ user }) {
   const [inputQty, setInputQty] = useState('');
   const [outputs, setOutputs] = useState([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]);
   const [procNotes, setProcNotes] = useState('');
+  const [depreciationCost, setDepreciationCost] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = () => { setLoading(true); bulkStockAPI.processingList({ branch_id: user.branch_id }).then(setList).catch(() => {}).finally(() => setLoading(false)); };
@@ -154,15 +155,16 @@ function ProcessingTab({ user }) {
   const totalOutput = outputs.reduce((s, o) => s + (parseFloat(o.quantity) || 0), 0);
   const wasteQty = Math.max(0, (parseFloat(inputQty) || 0) - totalOutput);
   const wastePct = parseFloat(inputQty) > 0 ? (wasteQty / parseFloat(inputQty) * 100).toFixed(1) : 0;
-  const totalInputCost = selectedBulk ? parseFloat(selectedBulk.cost_per_unit || 0) * (parseFloat(inputQty) || 0) : 0;
+  const rawInputCost = selectedBulk ? parseFloat(selectedBulk.cost_per_unit || 0) * (parseFloat(inputQty) || 0) : 0;
+  const totalInputCost = rawInputCost + (parseFloat(depreciationCost) || 0);
 
   const handleCreate = async () => {
     if (!selectedBulk || !inputQty || outputs.some(o => !o.output_name || !o.quantity)) return toast.error('กรุณากรอกข้อมูลให้ครบ');
     setSaving(true);
     try {
-      await bulkStockAPI.processingCreate({ bulk_item_id: selectedBulk.id, input_qty: parseFloat(inputQty), outputs: outputs.map(o => ({ ...o, quantity: parseFloat(o.quantity), product_id: o.product_id || null, sell_price: parseFloat(o.sell_price) || 0 })), notes: procNotes, branch_id: user.branch_id });
+      await bulkStockAPI.processingCreate({ bulk_item_id: selectedBulk.id, input_qty: parseFloat(inputQty), outputs: outputs.map(o => ({ ...o, quantity: parseFloat(o.quantity), product_id: o.product_id || null, sell_price: parseFloat(o.sell_price) || 0 })), notes: procNotes, branch_id: user.branch_id, depreciation_cost: parseFloat(depreciationCost) || 0 });
       toast.success('บันทึกการซอยสำเร็จ');
-      setShowCreate(false); setSelectedBulk(null); setInputQty(''); setOutputs([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]); setProcNotes('');
+      setShowCreate(false); setSelectedBulk(null); setInputQty(''); setOutputs([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]); setProcNotes(''); setDepreciationCost('');
       load();
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
   };
@@ -230,11 +232,24 @@ function ProcessingTab({ user }) {
                 </div>
               </div>
 
+              {/* ค่าเสื่อม */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">ค่าเสื่อม / ต้นทุนเพิ่มเติม (บาท)</label>
+                  <input type="number" className="input" value={depreciationCost}
+                    onChange={e => setDepreciationCost(e.target.value)}
+                    placeholder="0.00" step="0.01" min="0" />
+                  <p className="text-xs text-gray-400 mt-0.5">เช่น ค่าแรง ค่าซอย มูลค่าส่วนที่เสียหาย</p>
+                </div>
+                <div />
+              </div>
+
               {selectedBulk && inputQty && (
-                <div className="grid grid-cols-3 gap-3 bg-gray-50 rounded-lg p-3 text-sm">
+                <div className="grid grid-cols-4 gap-3 bg-gray-50 rounded-lg p-3 text-sm">
+                  <div><p className="text-gray-500">ต้นทุนวัตถุดิบ</p><p className="font-bold text-gray-700">฿{fmt(rawInputCost)}</p></div>
+                  <div><p className="text-gray-500">ค่าเสื่อม</p><p className={`font-bold ${parseFloat(depreciationCost) > 0 ? 'text-orange-500' : 'text-gray-400'}`}>฿{fmt(parseFloat(depreciationCost) || 0)}</p></div>
                   <div><p className="text-gray-500">ต้นทุนรวม</p><p className="font-bold text-blue-600">฿{fmt(totalInputCost)}</p></div>
-                  <div><p className="text-gray-500">ผลผลิตรวม</p><p className="font-bold text-green-600">{fmt(totalOutput, 3)} {selectedBulk.unit}</p></div>
-                  <div><p className="text-gray-500">เสื่อม / สูญเสีย</p><p className={`font-bold ${wasteQty > 0 ? 'text-red-600' : 'text-gray-600'}`}>{fmt(wasteQty, 3)} {selectedBulk.unit} ({wastePct}%)</p></div>
+                  <div><p className="text-gray-500">ซอยออก</p><p className={`font-bold ${wasteQty > 0 ? 'text-red-600' : 'text-gray-600'}`}>{fmt(wasteQty, 3)} {selectedBulk.unit} ({wastePct}%)</p></div>
                 </div>
               )}
 
