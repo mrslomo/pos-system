@@ -37,17 +37,29 @@ router.post('/', async (req, res, next) => {
       subtotal += itemSubtotal;
       itemDetails.push({ ...product, quantity: item.quantity, unit_price: unitPrice, subtotal: itemSubtotal });
 
+      // Get total stock across front + back
       const stockResult = await client.query(
-        'SELECT quantity FROM stock WHERE product_id=$1 AND branch_id=$2 AND location=$3 FOR UPDATE',
-        [item.product_id, branchId, 'front']
+        'SELECT location, quantity FROM stock WHERE product_id=$1 AND branch_id=$2 FOR UPDATE',
+        [item.product_id, branchId]
       );
-      const available = stockResult.rows[0]?.quantity || 0;
-      if (available < item.quantity) throw { status: 400, message: `Insufficient stock for ${product.name}` };
+      const stocks = {};
+      for (const row of stockResult.rows) stocks[row.location] = parseFloat(row.quantity || 0);
+      const totalAvailable = Object.values(stocks).reduce((s, q) => s + q, 0);
+      if (totalAvailable < item.quantity) throw { status: 400, message: `สต็อก ${product.name} ไม่พอ (มีรวม ${totalAvailable})` };
 
-      await client.query(
-        'UPDATE stock SET quantity = quantity - $1 WHERE product_id=$2 AND branch_id=$3 AND location=$4',
-        [item.quantity, item.product_id, branchId, 'front']
-      );
+      // Deduct front first, then back
+      let remaining = item.quantity;
+      for (const loc of ['front', 'back']) {
+        if (remaining <= 0) break;
+        const avail = stocks[loc] || 0;
+        if (avail <= 0) continue;
+        const deduct = Math.min(remaining, avail);
+        await client.query(
+          'UPDATE stock SET quantity = quantity - $1 WHERE product_id=$2 AND branch_id=$3 AND location=$4',
+          [deduct, item.product_id, branchId, loc]
+        );
+        remaining -= deduct;
+      }
     }
 
     const totalAmount = subtotal - discount_amount;

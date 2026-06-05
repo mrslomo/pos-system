@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { stockAPI, productAPI, branchAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight, Edit3, AlertTriangle, Search } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight, Edit3, AlertTriangle, Search, Plus } from 'lucide-react';
 
 function StockModal({ type, product, onClose, onSave }) {
   const { user } = useAuth();
-  const [form, setForm] = useState({ product_id: product?.id || '', location: 'back', quantity: '', notes: '', from_location: 'back', to_location: 'front' });
+  const [form, setForm] = useState({ product_id: product?.id || '', location: 'front', quantity: '', notes: '', from_location: 'back', to_location: 'front' });
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -91,6 +91,18 @@ export default function StockPage() {
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [showLowOnly, setShowLowOnly] = useState(false);
+  const [quickAdd, setQuickAdd] = useState({}); // { product_id: qty_string }
+
+  const handleQuickAdd = async (product) => {
+    const qty = parseFloat(quickAdd[product.id]);
+    if (!qty || qty <= 0) return;
+    try {
+      await stockAPI.stockIn({ product_id: product.id, branch_id: user.branch_id, location: 'front', quantity: qty, notes: 'เพิ่มสต็อกด่วน' });
+      toast.success(`เพิ่ม ${qty} ${product.unit} → ${product.name}`);
+      setQuickAdd(prev => ({ ...prev, [product.id]: '' }));
+      loadStock();
+    } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); }
+  };
 
   const loadStock = async () => {
     setLoading(true);
@@ -136,7 +148,7 @@ export default function StockPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
-                {['สินค้า','หมวดหมู่','หน้าร้าน','หลังบ้าน','รวม','ขั้นต่ำ','สถานะ','จัดการ'].map(h => (
+                {['สินค้า','หมวดหมู่','หน้าร้าน','หลังบ้าน','รวม','ขั้นต่ำ','สถานะ','เพิ่มด่วน','จัดการ'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
                 ))}
               </tr>
@@ -160,6 +172,22 @@ export default function StockPage() {
                     <td className="px-4 py-2 text-gray-500">{p.min_stock}</td>
                     <td className="px-4 py-2">
                       {isEmpty ? <span className="badge-red">หมด</span> : isLow ? <span className="badge-yellow">ใกล้หมด</span> : <span className="badge-green">ปกติ</span>}
+                    </td>
+                    {/* Quick add inline */}
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number" min="0" step="0.001"
+                          value={quickAdd[p.id] || ''}
+                          onChange={e => setQuickAdd(prev => ({ ...prev, [p.id]: e.target.value }))}
+                          onKeyDown={e => e.key === 'Enter' && handleQuickAdd(p)}
+                          className="w-20 border rounded px-2 py-1 text-sm text-right focus:ring-1 focus:ring-green-400 focus:outline-none"
+                          placeholder="0" />
+                        <button onClick={() => handleQuickAdd(p)}
+                          className="p-1.5 bg-green-500 hover:bg-green-600 text-white rounded transition-colors">
+                          <Plus size={12} />
+                        </button>
+                      </div>
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex gap-1">
