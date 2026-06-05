@@ -179,8 +179,12 @@ function BulkItemsTab({ user }) {
   );
 }
 
-// ─── Tab: ซอยสต๊อก ────────────────────────────────────────────────────────────
-function ProcessingTab({ user }) {
+// ─── Tab: ซอยสต๊อก / แลป ─────────────────────────────────────────────────────
+function ProcessingTab({ user, mode = 'cut' }) {
+  const isLab = mode === 'lab';
+  const tabLabel = isLab ? 'แลป' : 'ซอยสต็อก';
+  const btnLabel = isLab ? 'บันทึกการทำแลป' : 'บันทึกการซอย';
+  const headerLabel = isLab ? 'บันทึกการทำแลป' : 'บันทึกการซอยสต๊อก';
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -196,7 +200,7 @@ function ProcessingTab({ user }) {
   const [spoiledQty, setSpoiledQty] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const load = () => { setLoading(true); bulkStockAPI.processingList({ branch_id: user.branch_id }).then(setList).catch(() => {}).finally(() => setLoading(false)); };
+  const load = () => { setLoading(true); bulkStockAPI.processingList({ branch_id: user.branch_id, lab: isLab }).then(setList).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(() => {
     load();
     bulkStockAPI.items({ branch_id: user.branch_id }).then(setBulkItems).catch(() => {});
@@ -219,7 +223,7 @@ function ProcessingTab({ user }) {
     try {
       const allOutputs = [...outputs.map(o => ({ ...o, quantity: parseFloat(o.quantity), product_id: o.product_id || null, sell_price: parseFloat(o.sell_price) || 0 }))];
       if (spoiledQtyNum > 0) allOutputs.push({ output_name: 'สินค้าเสื่อม', quantity: spoiledQtyNum, unit: selectedBulk.unit || 'kg', product_id: null, sell_price: 0 });
-      await bulkStockAPI.processingCreate({ bulk_item_id: selectedBulk.id, input_qty: parseFloat(inputQty), outputs: allOutputs, notes: procNotes, branch_id: user.branch_id });
+      await bulkStockAPI.processingCreate({ bulk_item_id: selectedBulk.id, input_qty: parseFloat(inputQty), outputs: allOutputs, notes: procNotes, branch_id: user.branch_id, lab: isLab });
       toast.success('บันทึกการซอยสำเร็จ');
       setShowCreate(false); setSelectedBulk(null); setInputQty(''); setOutputs([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]); setProcNotes(''); setSpoiledQty('');
       load();
@@ -234,7 +238,7 @@ function ProcessingTab({ user }) {
   return (
     <div>
       <div className="flex justify-end mb-4">
-        <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2"><Scissors size={16} /> บันทึกการซอย</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2"><Scissors size={16} /> {btnLabel}</button>
       </div>
 
       <div className="card overflow-hidden p-0">
@@ -273,7 +277,7 @@ function ProcessingTab({ user }) {
       {showCreate && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl my-8">
-            <div className="flex items-center justify-between p-5 border-b"><h2 className="font-semibold text-lg">บันทึกการซอยสต๊อก</h2><button onClick={() => setShowCreate(false)}><X size={20} /></button></div>
+            <div className="flex items-center justify-between p-5 border-b"><h2 className="font-semibold text-lg">{headerLabel}</h2><button onClick={() => setShowCreate(false)}><X size={20} /></button></div>
             <div className="p-5 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -340,7 +344,7 @@ function ProcessingTab({ user }) {
             </div>
             <div className="p-5 border-t flex gap-3 justify-end">
               <button onClick={() => setShowCreate(false)} className="btn-secondary">ยกเลิก</button>
-              <button onClick={handleCreate} disabled={saving} className="btn-primary flex items-center gap-2">{saving ? 'กำลังบันทึก...' : <><Scissors size={16} /> บันทึกการซอย</>}</button>
+              <button onClick={handleCreate} disabled={saving} className="btn-primary flex items-center gap-2">{saving ? 'กำลังบันทึก...' : <><Scissors size={16} /> {btnLabel}</>}</button>
             </div>
           </div>
         </div>
@@ -490,7 +494,8 @@ export default function BulkStockPage() {
   const [tab, setTab] = useState('stock');
   const tabs = [
     { key: 'stock', label: 'สต๊อกใหญ่' },
-    { key: 'processing', label: 'ซอยสต๊อก' },
+    { key: 'processing', label: 'ซอยสต็อก' },
+    { key: 'lab', label: '🔬 แลป' },
     { key: 'cost', label: 'ต้นทุน/กำไร' },
   ];
   return (
@@ -505,7 +510,8 @@ export default function BulkStockPage() {
         ))}
       </div>
       {tab === 'stock' && <BulkItemsTab user={user} />}
-      {tab === 'processing' && <ProcessingTab user={user} />}
+      {tab === 'processing' && <ProcessingTab user={user} mode="cut" />}
+      {tab === 'lab' && <ProcessingTab user={user} mode="lab" />}
       {tab === 'cost' && <CostAnalysisTab user={user} />}
     </div>
   );

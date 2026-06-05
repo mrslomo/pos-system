@@ -96,13 +96,15 @@ router.post('/stock-in', auth, async (req, res, next) => {
 router.get('/processing', auth, async (req, res, next) => {
   try {
     const branchId = req.query.branch_id || req.user.branch_id || 1;
+    const labOnly = req.query.lab === 'true';
+    const prefix = labOnly ? 'LB%' : 'PR%';
     const r = await query(
       `SELECT sp.*, bi.name AS bulk_item_name, bi.unit, u.name AS user_name
        FROM stock_processing sp
        LEFT JOIN bulk_items bi ON bi.id=sp.bulk_item_id
        LEFT JOIN users u ON u.id=sp.user_id
-       WHERE sp.branch_id=$1 ORDER BY sp.created_at DESC LIMIT 100`,
-      [branchId]
+       WHERE sp.branch_id=$1 AND sp.process_number LIKE $2 ORDER BY sp.created_at DESC LIMIT 100`,
+      [branchId, prefix]
     );
     res.json(r.rows);
   } catch (err) { next(err); }
@@ -130,7 +132,7 @@ router.post('/processing', auth, async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { bulk_item_id, input_qty, outputs, notes, branch_id } = req.body;
+    const { bulk_item_id, input_qty, outputs, notes, branch_id, lab } = req.body;
     if (!bulk_item_id || !input_qty || !outputs?.length) throw { status: 400, error: 'ข้อมูลไม่ครบ' };
     const branchId = branch_id || req.user.branch_id || 1;
 
@@ -142,7 +144,8 @@ router.post('/processing', auth, async (req, res, next) => {
 
     // Generate process number
     const today = new Date();
-    const prefix = `PR${String(today.getFullYear()).slice(-2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+    const typeCode = lab ? 'LB' : 'PR';
+    const prefix = `${typeCode}${String(today.getFullYear()).slice(-2)}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
     const last = await client.query(`SELECT process_number FROM stock_processing WHERE process_number LIKE $1 ORDER BY process_number DESC LIMIT 1`, [`${prefix}%`]);
     const seq = last.rows[0] ? parseInt(last.rows[0].process_number.split('-')[1]) + 1 : 1;
     const processNumber = `${prefix}-${String(seq).padStart(3,'0')}`;
