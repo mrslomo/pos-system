@@ -36,10 +36,9 @@ router.put('/items/:id', auth, async (req, res, next) => {
   try {
     const { name, unit, category, min_qty, notes, is_active, cost_per_unit } = req.body;
     const r = await query(
-      `UPDATE bulk_items SET name=$1, unit=$2, category=$3, min_qty=$4, notes=$5, is_active=$6,
-       cost_per_unit = CASE WHEN $7::TEXT IS NOT NULL AND $7::TEXT != '' THEN $7::DECIMAL ELSE cost_per_unit END
+      `UPDATE bulk_items SET name=$1, unit=$2, category=$3, min_qty=$4, notes=$5, is_active=$6, cost_per_unit=$7
        WHERE id=$8 RETURNING *`,
-      [name, unit || 'kg', category || null, min_qty || 0, notes || null, is_active !== false, cost_per_unit != null ? String(cost_per_unit) : null, req.params.id]
+      [name, unit || 'kg', category || null, parseFloat(min_qty) || 0, notes || null, is_active !== false, parseFloat(cost_per_unit) || 0, req.params.id]
     );
     if (!r.rows[0]) return res.status(404).json({ error: 'ไม่พบรายการ' });
     res.json(r.rows[0]);

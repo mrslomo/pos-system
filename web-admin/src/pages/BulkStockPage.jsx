@@ -35,7 +35,15 @@ function BulkItemsTab({ user }) {
     if (!editCostValue || parseFloat(editCostValue) <= 0) return toast.error('ระบุราคาต้นทุนที่ถูกต้อง');
     setSaving(true);
     try {
-      await bulkStockAPI.updateItem(showEditCost.id, { cost_per_unit: parseFloat(editCostValue) });
+      await bulkStockAPI.updateItem(showEditCost.id, {
+        name: showEditCost.name,
+        unit: showEditCost.unit || 'kg',
+        category: showEditCost.category || '',
+        min_qty: showEditCost.min_qty || 0,
+        notes: showEditCost.notes || '',
+        is_active: showEditCost.is_active !== false,
+        cost_per_unit: parseFloat(editCostValue),
+      });
       toast.success(`แก้ไขต้นทุน ${showEditCost.name} เป็น ฿${editCostValue}/kg`);
       setShowEditCost(null); setEditCostValue(''); load();
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
