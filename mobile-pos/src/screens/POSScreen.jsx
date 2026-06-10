@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet,
-  Alert, ActivityIndicator, Modal, ScrollView, Keyboard, Platform,
+  Alert, ActivityIndicator, Modal, ScrollView, Keyboard, Platform, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -18,6 +18,9 @@ function ProductRow({ item, onAdd }) {
   const typeLabel = { fresh: 'สด', innards: 'เครื่องใน', processed: 'แปรรูป' };
   return (
     <TouchableOpacity style={styles.productRow} onPress={() => onAdd(item)}>
+      {item.image_url
+        ? <Image source={{ uri: item.image_url }} style={styles.productImage} />
+        : <View style={styles.productImagePlaceholder} />}
       <View style={{ flex: 1 }}>
         <Text style={styles.productName} numberOfLines={1}>{item.name}</Text>
         <View style={styles.productMeta}>
@@ -438,7 +441,9 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 15, color: '#111827' },
   scanBtn: { width: 44, height: 44, backgroundColor: '#3b82f6', borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
   searchDropdown: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb', elevation: 4, zIndex: 10 },
-  productRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  productRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f3f4f6', gap: 10 },
+  productImage: { width: 48, height: 48, borderRadius: 6, backgroundColor: '#f3f4f6' },
+  productImagePlaceholder: { width: 48, height: 48, borderRadius: 6, backgroundColor: '#f3f4f6' },
   productName: { fontSize: 14, fontWeight: '600', color: '#111827', marginBottom: 2 },
   productMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   typeBadge: { borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },

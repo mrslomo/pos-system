@@ -7,7 +7,7 @@ const ROLES = { admin: 'ผู้ดูแลระบบ', manager: 'ผู้�
 const ROLE_COLORS = { admin: 'badge-red', manager: 'badge-blue', cashier: 'badge-green' };
 
 function UserModal({ user, branches, onClose, onSave }) {
-  const [form, setForm] = useState(user ? { ...user, password: '' } : { name:'', email:'', password:'', role:'cashier', branch_id:'', is_active:true });
+  const [form, setForm] = useState(user ? { ...user, password: '', pin: '' } : { name:'', email:'', password:'', pin:'', role:'cashier', branch_id:'', is_active:true });
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -38,8 +38,8 @@ function UserModal({ user, branches, onClose, onSave }) {
             <input {...f('name')} required className="input" placeholder="ชื่อผู้ใช้" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">อีเมล *</label>
-            <input {...f('email')} required type="email" className="input" placeholder="user@example.com" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">อีเมล</label>
+            <input {...f('email')} type="email" className="input" placeholder="user@example.com (ไม่บังคับ)" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{user?.id ? 'รหัสผ่านใหม่ (เว้นว่างไม่เปลี่ยน)' : 'รหัสผ่าน *'}</label>
@@ -59,6 +59,13 @@ function UserModal({ user, branches, onClose, onSave }) {
                 {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              PIN (4-6 หลัก) — ใช้ล็อกอินที่หน้าร้าน
+            </label>
+            <input {...f('pin')} type="text" inputMode="numeric" maxLength={6} className="input font-mono tracking-widest text-center text-lg" placeholder="● ● ● ●" />
+            <p className="text-xs text-gray-400 mt-0.5">{user?.has_pin ? 'มี PIN แล้ว — ใส่ใหม่เพื่อเปลี่ยน, เว้นว่างไม่เปลี่ยน' : 'ตั้ง PIN เพื่อให้พนักงานล็อกอินที่หน้าร้านได้'}</p>
           </div>
           {user?.id && (
             <label className="flex items-center gap-2">

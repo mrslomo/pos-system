@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { productAPI } from '../services/api';
+import { productAPI, uploadAPI } from '../services/api';
 import toast from 'react-hot-toast';
 import { Plus, Edit2, Trash2, Search, RefreshCw, ImagePlus, X } from 'lucide-react';
 
@@ -45,7 +45,7 @@ function ProductImage({ src, size = 10, className = '' }) {
       <ImagePlus size={size * 1.5} className="text-gray-300" />
     </div>
   );
-  return <img src={src} alt="" className={`w-${size} h-${size} rounded-lg object-cover flex-shrink-0 ${className}`} />;
+  return <img src={src} alt="" className={`w-${size} h-${size} rounded-lg object-contain bg-white flex-shrink-0 ${className}`} />;
 }
 
 function ProductModal({ product, onClose, onSave }) {
@@ -62,6 +62,14 @@ function ProductModal({ product, onClose, onSave }) {
     setLoading(true);
     try {
       const data = { ...form };
+      if (data.image_url?.startsWith('data:image')) {
+        try {
+          const { url } = await uploadAPI.upload(data.image_url);
+          data.image_url = url;
+        } catch {
+          // Cloudinary ไม่พร้อม เซฟ base64 ตรง
+        }
+      }
       if (product?.id) {
         await productAPI.update(product.id, data);
         toast.success('อัปเดตสินค้าสำเร็จ');
@@ -184,7 +192,10 @@ function ProductModal({ product, onClose, onSave }) {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">หน่วย</label>
               <select {...f('unit')} className="input">
-                {['kg','g','piece','box','bottle','pack','bag'].map(u => <option key={u}>{u}</option>)}
+                {[
+                  ['kg','กิโลกรัม (kg)'],['g','กรัม (g)'],['piece','ชิ้น'],
+                  ['pack','แพค'],['box','กล่อง'],['bag','ถุง'],['bottle','ขวด'],['bunch','มัด'],
+                ].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </div>
           </div>

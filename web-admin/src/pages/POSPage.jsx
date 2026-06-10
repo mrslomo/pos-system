@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { productAPI, salesAPI, heldBillAPI } from '../services/api';
+import { productAPI, salesAPI, heldBillAPI, authAPI } from '../services/api';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Minus, Trash2, Scale, X, Search, Printer, PauseCircle, PlayCircle, Clock, Package } from 'lucide-react';
@@ -17,6 +18,11 @@ export default function POSPage() {
   const [processing, setProcessing] = useState(false);
   const [weightProduct, setWeightProduct] = useState(null);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [activeCashier, setActiveCashier] = useState(null);
+  const [showPinModal, setShowPinModal] = useState(true);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [pinLoading, setPinLoading] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
   const [typeFilter, setTypeFilter] = useState('');
 
@@ -52,8 +58,12 @@ export default function POSPage() {
 
   useEffect(() => {
     productAPI.all({ limit: 200, page: 1 })
-      .then(r => setAllProducts(r.products || []))
-      .catch(() => {});
+      .then(r => {
+        const products = r.products || [];
+        console.log('โหลดสินค้า:', products.length, 'รายการ, image_url length:', products[0]?.image_url?.length, 'รูปแรก:', products[0]?.image_url?.slice(0, 50));
+        setAllProducts(products);
+      })
+      .catch((err) => console.error('โหลดสินค้าไม่ได้:', err));
   }, []);
 
   useEffect(() => {
@@ -238,6 +248,30 @@ export default function POSPage() {
     w.document.close();
   };
 
+  const handlePinSubmit = async () => {
+    if (pinInput.length < 4) { setPinError('PIN ต้องมีอย่างน้อย 4 หลัก'); return; }
+    setPinLoading(true); setPinError('');
+    try {
+      const cashier = await api.post('/auth/pin-login', { pin: pinInput, branch_id: user.branch_id });
+      setActiveCashier(cashier);
+      setShowPinModal(false);
+      setPinInput('');
+      toast.success(`สวัสดี ${cashier.name}!`);
+    } catch (err) {
+      setPinError(err.error || 'PIN ไม่ถูกต้อง');
+      setPinInput('');
+    } finally { setPinLoading(false); }
+  };
+
+  const handlePinKey = (key) => {
+    if (key === 'back') { setPinInput(p => p.slice(0, -1)); return; }
+    if (key === 'clear') { setPinInput(''); return; }
+    if (pinInput.length >= 6) return;
+    const next = pinInput + key;
+    setPinInput(next);
+    if (next.length >= 4) setPinError('');
+  };
+
   const remainingMins = (expiresAt) => {
     const diff = new Date(expiresAt) - new Date();
     const mins = Math.floor(diff / 60000);
@@ -249,6 +283,31 @@ export default function POSPage() {
     <div className="flex gap-4 h-[calc(100vh-120px)]">
       {/* Left */}
       <div className="flex-1 flex flex-col min-w-0">
+
+        {/* Cashier bar */}
+        {activeCashier ? (
+          <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-4 py-2 mb-2 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm">
+                {activeCashier.name.charAt(0)}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-blue-800">{activeCashier.name}</p>
+                <p className="text-xs text-blue-500">พนักงานขาย</p>
+              </div>
+            </div>
+            <button onClick={() => { setShowPinModal(true); setPinInput(''); setPinError(''); }}
+              className="text-xs text-blue-600 border border-blue-300 px-3 py-1 rounded-lg hover:bg-blue-100">
+              เปลี่ยนพนักงาน
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setShowPinModal(true)}
+            className="flex items-center gap-2 mb-2 px-4 py-2 bg-gray-100 hover:bg-blue-50 border border-dashed border-gray-300 hover:border-blue-300 rounded-xl text-sm text-gray-500 hover:text-blue-600 transition-all flex-shrink-0">
+            <span className="text-lg">👤</span> กดเพื่อระบุพนักงาน (PIN)
+          </button>
+        )}
+
         {/* Search bar */}
         <div className="card mb-3">
           <div className="flex gap-2 items-center">
@@ -284,10 +343,10 @@ export default function POSPage() {
           )}
         </div>
 
-        {/* Product Grid */}
+        {/* Product Grid — fills remaining left space */}
         {!search.trim() && (
-          <div className="card mb-3 p-3">
-            <div className="flex gap-1 mb-3 bg-gray-100 rounded-lg p-1">
+          <div className="card flex-1 overflow-hidden p-3 flex flex-col">
+            <div className="flex gap-1 mb-2 bg-gray-100 rounded-lg p-1 flex-shrink-0">
               {[['', 'ทั้งหมด'], ['fresh', 'ของสด'], ['innards', 'เครื่องใน'], ['processed', 'แปรรูป']].map(([v, l]) => (
                 <button key={v} onClick={() => setTypeFilter(v)}
                   className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all ${typeFilter === v ? 'bg-white shadow text-gray-800' : 'text-gray-500'}`}>
@@ -295,31 +354,37 @@ export default function POSPage() {
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-4 gap-2 max-h-56 overflow-y-auto pr-1">
+            <div className="overflow-y-auto flex-1 pr-1">
+              <div className="grid grid-cols-4 gap-2">
               {allProducts.filter(p => !typeFilter || p.product_type === typeFilter).map(p => {
                 const stock = parseFloat(p.front_stock || 0) + parseFloat(p.back_stock || 0);
+                const stockColor = stock <= 0 ? 'text-red-500' : 'text-gray-500';
                 return (
                   <button key={p.id}
                     onClick={() => p.is_weight ? setWeightProduct(p) : addToCart(p)}
-                    className="flex flex-col rounded-lg border-2 border-transparent hover:border-blue-300 bg-gray-50 hover:bg-blue-50 transition-all overflow-hidden text-left shadow-sm">
-                    <div className="w-full h-16 bg-gray-100 flex items-center justify-center overflow-hidden">
-                      {p.image_url
-                        ? <img src={p.image_url} alt="" className="w-full h-full object-cover" />
-                        : <Package size={20} className="text-gray-300" />}
+                    className="flex flex-col rounded-lg border border-gray-200 hover:border-blue-400 bg-white hover:bg-blue-50 transition-all overflow-hidden text-left shadow-sm">
+                    {/* Image */}
+                    <div className="w-full relative bg-gray-50" style={{paddingTop:'65%'}}>
+                      <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+                        {p.image_url
+                          ? <img src={p.image_url} alt="" className="w-full h-full object-cover" />
+                          : <Package size={24} className="text-gray-200" />}
+                      </div>
+                      {p.is_weight && <span className="absolute top-1 right-1 text-xs bg-blue-500 text-white px-1 py-0.5 rounded font-medium z-10">ชั่ง</span>}
+                      {stock <= 0 && <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-10"><span className="text-white text-xs font-bold bg-red-500 px-1.5 py-0.5 rounded">หมด</span></div>}
                     </div>
+                    {/* Info */}
                     <div className="p-1.5">
-                      <p className="text-xs font-semibold leading-tight line-clamp-1 text-gray-800">{p.name}</p>
-                      <p className="text-xs font-bold text-blue-600">฿{fmt(p.sell_price)}</p>
-                      <span className={`text-xs ${stock <= 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                        {fmt(stock, 0)} {p.unit}
-                      </span>
+                      <p className="text-xs font-semibold leading-tight line-clamp-2 text-gray-800">{p.name}</p>
+                      <p className="text-xs font-bold text-blue-600 mt-0.5">฿{fmt(p.sell_price)}</p>
                     </div>
                   </button>
                 );
               })}
               {allProducts.filter(p => !typeFilter || p.product_type === typeFilter).length === 0 && (
-                <div className="col-span-4 py-8 text-center text-gray-400 text-sm">ไม่พบสินค้า</div>
+                <div className="col-span-3 py-8 text-center text-gray-400 text-sm">ไม่พบสินค้า</div>
               )}
+              </div>
             </div>
           </div>
         )}
@@ -338,27 +403,30 @@ export default function POSPage() {
           </div>
         )}
 
-        {/* Customer name (optional) */}
-        {customerName && (
-          <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-yellow-50 border border-yellow-200 rounded-lg text-sm">
-            <span className="text-yellow-700 font-medium">ลูกค้า: {customerName}</span>
-            <button onClick={() => setCustomerName('')} className="ml-auto text-yellow-500 hover:text-yellow-700"><X size={14} /></button>
-          </div>
-        )}
+      </div>
 
-        {/* Cart */}
-        <div className="card flex-1 overflow-hidden flex flex-col">
+      {/* Right panel: Cart (top) + Summary (bottom) */}
+      <div className="w-[420px] flex flex-col gap-2 min-h-0">
+
+        {/* ── TOP: รายการ ─────────────────────────────── */}
+        <div className="card flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="flex items-center justify-between mb-2">
             <h2 className="font-semibold text-gray-700">รายการ ({cart.length})</h2>
             {cart.length > 0 && (
               <button onClick={clearCart} className="text-xs text-red-400 hover:text-red-600">ล้างตะกร้า</button>
             )}
           </div>
-          <div className="flex-1 overflow-y-auto space-y-1">
+          {customerName && (
+            <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-yellow-50 border border-yellow-200 rounded-lg text-sm flex-shrink-0">
+              <span className="text-yellow-700 font-medium">ลูกค้า: {customerName}</span>
+              <button onClick={() => setCustomerName('')} className="ml-auto text-yellow-500 hover:text-yellow-700"><X size={14} /></button>
+            </div>
+          )}
+          <div className="flex-1 overflow-y-auto space-y-1 min-h-0">
             {cart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 text-gray-400">
-                <CartIcon size={40} className="mb-2 opacity-30" />
-                <p className="text-sm">สแกน Barcode หรือค้นหาสินค้า</p>
+              <div className="flex flex-col items-center justify-center h-32 text-gray-400">
+                <CartIcon size={36} className="mb-2 opacity-30" />
+                <p className="text-sm">คลิกสินค้าหรือสแกน Barcode</p>
               </div>
             ) : cart.map(item => (
               <div key={item.product_id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50">
@@ -386,32 +454,30 @@ export default function POSPage() {
             ))}
           </div>
         </div>
-      </div>
 
-      {/* Right: Summary */}
-      <div className="w-72 flex flex-col gap-3">
-        <div className="card flex-1 overflow-y-auto">
-          <h2 className="font-semibold text-gray-700 mb-3">สรุปยอด</h2>
-          <div className="space-y-2 text-sm">
+        {/* ── BOTTOM: สรุปยอด + ชำระเงิน ────────────── */}
+        <div className="card flex-shrink-0 space-y-3">
+          {/* Summary */}
+          <div className="space-y-1.5 text-sm">
             <div className="flex justify-between"><span className="text-gray-500">ยอดรวม</span><span>฿{fmt(subtotal)}</span></div>
             <div className="flex justify-between items-center">
               <span className="text-gray-500">ส่วนลด</span>
               <input type="number" value={discount} onChange={e => setDiscount(parseFloat(e.target.value) || 0)}
                 className="w-24 text-right border rounded px-2 py-1 text-sm" min="0" />
             </div>
-            <hr />
-            <div className="flex justify-between text-lg font-bold">
+            <div className="flex justify-between text-lg font-bold border-t pt-1.5">
               <span>ยอดสุทธิ</span>
               <span className="text-blue-600">฿{fmt(total)}</span>
             </div>
           </div>
 
-          <div className="mt-4">
-            <div className="flex items-center justify-between mb-2">
+          {/* Payment */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
               <p className="text-sm font-medium text-gray-700">ช่องทางชำระเงิน</p>
               <button onClick={addPayment} className="text-xs text-blue-600 hover:text-blue-700 font-medium">+ เพิ่มช่องทาง</button>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {payments.map((p, i) => (
                 <div key={i} className="flex gap-1.5 items-center">
                   <select value={p.method} onChange={e => updatePayment(i, 'method', e.target.value)}
@@ -429,69 +495,51 @@ export default function POSPage() {
                 </div>
               ))}
             </div>
-
-            {/* Quick fill */}
             {total > 0 && (
               <button onClick={() => setPayments(prev => prev.map((p, i) => i === 0 ? { ...p, amount: String(total) } : p))}
-                className="mt-2 text-xs text-gray-500 hover:text-blue-600 underline">
+                className="mt-1.5 text-xs text-gray-500 hover:text-blue-600 underline">
                 กรอกพอดี ฿{fmt(total)}
               </button>
             )}
-
-            {/* Summary */}
             {totalPaid > 0 && (
               <div className="mt-2 bg-gray-50 rounded-lg p-2 space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">รับเงินรวม</span>
-                  <span className="font-medium">฿{fmt(totalPaid)}</span>
-                </div>
-                {remaining > 0 && (
-                  <div className="flex justify-between text-red-500 font-semibold">
-                    <span>ยังขาดอีก</span>
-                    <span>฿{fmt(remaining)}</span>
-                  </div>
-                )}
-                {change > 0 && (
-                  <div className="flex justify-between text-green-600 font-bold">
-                    <span>เงินทอน</span>
-                    <span>฿{fmt(change)}</span>
-                  </div>
-                )}
+                <div className="flex justify-between"><span className="text-gray-500">รับเงินรวม</span><span className="font-medium">฿{fmt(totalPaid)}</span></div>
+                {remaining > 0 && <div className="flex justify-between text-red-500 font-semibold"><span>ยังขาดอีก</span><span>฿{fmt(remaining)}</span></div>}
+                {change > 0 && <div className="flex justify-between text-green-600 font-bold"><span>เงินทอน</span><span>฿{fmt(change)}</span></div>}
               </div>
             )}
           </div>
-        </div>
 
-        {/* Action buttons */}
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setShowHoldModal(true)} disabled={!cart.length}
-            className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium border-2 border-yellow-400 text-yellow-700 bg-yellow-50 hover:bg-yellow-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-            <PauseCircle size={16} /> Hold บิล
-          </button>
-          <button onClick={loadHeldBills}
-            className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-medium border-2 border-green-400 text-green-700 bg-green-50 hover:bg-green-100 transition-all">
-            <PlayCircle size={16} /> เรียกบิล
-          </button>
-        </div>
-
-        <button onClick={handleCheckout} disabled={!cart.length || processing || (totalPaid < total && totalPaid > 0) || (cart.length > 0 && totalPaid === 0)}
-          className={`py-4 text-base font-bold w-full rounded-lg transition-all ${remaining > 0 && totalPaid > 0 ? 'bg-red-400 cursor-not-allowed text-white' : 'btn-success'}`}>
-          {processing ? 'กำลังดำเนินการ...' : remaining > 0 && totalPaid > 0 ? `ขาดอีก ฿${fmt(remaining)}` : `ชำระเงิน ฿${fmt(total)}`}
-        </button>
-
-        {lastReceipt && (
-          <div className="card bg-green-50 border-green-200 py-2 px-3">
-            <div className="flex items-center justify-between">
+          {/* Last receipt */}
+          {lastReceipt && (
+            <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-1.5">
               <div>
                 <p className="text-xs text-green-600 font-mono font-bold">{lastReceipt.receipt_number}</p>
                 <p className="text-xs text-gray-500">฿{fmt(lastReceipt.total_amount)}</p>
               </div>
-              <button onClick={() => { setShowReceiptModal(true); }} className="flex items-center gap-1 text-xs text-green-700 hover:text-green-900 px-2 py-1 bg-green-100 rounded-lg">
+              <button onClick={() => setShowReceiptModal(true)} className="flex items-center gap-1 text-xs text-green-700 hover:text-green-900 px-2 py-1 bg-green-100 rounded-lg">
                 <Printer size={12} /> ปริ้น
               </button>
             </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setShowHoldModal(true)} disabled={!cart.length}
+              className="flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium border-2 border-yellow-400 text-yellow-700 bg-yellow-50 hover:bg-yellow-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+              <PauseCircle size={15} /> Hold บิล
+            </button>
+            <button onClick={loadHeldBills}
+              className="flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium border-2 border-green-400 text-green-700 bg-green-50 hover:bg-green-100 transition-all">
+              <PlayCircle size={15} /> เรียกบิล
+            </button>
           </div>
-        )}
+
+          <button onClick={handleCheckout} disabled={!cart.length || processing || (totalPaid < total && totalPaid > 0) || (cart.length > 0 && totalPaid === 0)}
+            className={`py-3.5 text-base font-bold w-full rounded-lg transition-all ${remaining > 0 && totalPaid > 0 ? 'bg-red-400 cursor-not-allowed text-white' : 'btn-success'}`}>
+            {processing ? 'กำลังดำเนินการ...' : remaining > 0 && totalPaid > 0 ? `ขาดอีก ฿${fmt(remaining)}` : `ชำระเงิน ฿${fmt(total)}`}
+          </button>
+        </div>
       </div>
 
       {/* ─── Hold Modal ─────────────────────────────── */}
@@ -523,6 +571,56 @@ export default function POSPage() {
               <button onClick={handleHold} disabled={holdLoading} className="flex-1 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white font-medium text-sm disabled:opacity-50">
                 {holdLoading ? 'กำลัง Hold...' : 'Hold บิล'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── PIN Modal ──────────────────────────────── */}
+      {showPinModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="text-3xl">👤</span>
+              </div>
+              <h2 className="text-lg font-bold text-gray-800 mb-1">ระบุตัวพนักงาน</h2>
+              <p className="text-gray-400 text-sm mb-4">กรอก PIN ของคุณ</p>
+
+              {/* PIN display */}
+              <div className="flex justify-center gap-3 mb-4">
+                {[0,1,2,3,4,5].map(i => (
+                  <div key={i} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all ${i < pinInput.length ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}`}>
+                    {i < pinInput.length && <div className="w-3 h-3 rounded-full bg-white" />}
+                  </div>
+                ))}
+              </div>
+
+              {pinError && <p className="text-red-500 text-sm mb-3">{pinError}</p>}
+
+              {/* Numpad */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {['1','2','3','4','5','6','7','8','9','clear','0','back'].map(key => (
+                  <button key={key} onClick={() => handlePinKey(key)}
+                    className={`py-3.5 rounded-xl font-semibold text-lg transition-all active:scale-95 ${
+                      key === 'back' ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' :
+                      key === 'clear' ? 'bg-red-50 text-red-500 hover:bg-red-100 text-sm' :
+                      'bg-gray-50 text-gray-800 hover:bg-blue-50 hover:text-blue-700'
+                    }`}>
+                    {key === 'back' ? '⌫' : key === 'clear' ? 'ล้าง' : key}
+                  </button>
+                ))}
+              </div>
+
+              <button onClick={handlePinSubmit} disabled={pinInput.length < 4 || pinLoading}
+                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-40 transition-all">
+                {pinLoading ? 'กำลังตรวจสอบ...' : 'ยืนยัน'}
+              </button>
+              {activeCashier && (
+                <button onClick={() => setShowPinModal(false)} className="w-full mt-2 py-2 text-sm text-gray-500 hover:text-gray-700">
+                  ยกเลิก (ใช้คนเดิม: {activeCashier.name})
+                </button>
+              )}
             </div>
           </div>
         </div>

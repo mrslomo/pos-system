@@ -365,6 +365,7 @@ const migrations = `
   );
 
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id);
+  ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
 
   CREATE INDEX IF NOT EXISTS idx_stock_counts_branch ON stock_counts(branch_id, count_date);
   CREATE INDEX IF NOT EXISTS idx_stock_count_items ON stock_count_items(count_id);

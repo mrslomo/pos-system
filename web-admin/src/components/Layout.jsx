@@ -29,6 +29,7 @@ const nav = [
   { to: '/reports', label: 'รายงาน', icon: BarChart3 },
   { divider: true, label: 'พนักงาน' },
   { to: '/shifts', label: 'กะทำงาน', icon: AlarmClock },
+  { to: '/users', label: 'พนักงาน & PIN', icon: Users, roles: ['admin', 'manager'] },
   { divider: true, label: 'ระบบ' },
   { to: '/bank-qr', label: 'QR รับเงิน', icon: QrCode },
   { to: '/branches', label: 'สาขา', icon: GitBranch, roles: ['admin'] },

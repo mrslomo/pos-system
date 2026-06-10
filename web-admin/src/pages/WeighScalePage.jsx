@@ -127,6 +127,7 @@ export default function WeighScalePage() {
   const [productSearch, setProductSearch] = useState('');
   const [productResults, setProductResults] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [allWeightProducts, setAllWeightProducts] = useState([]);
 
   // Mode + partner
   const [mode, setMode] = useState('retail');
@@ -145,6 +146,9 @@ export default function WeighScalePage() {
   useEffect(() => {
     partnerAPI.list({ branch_id: user.branch_id })
       .then(r => setPartners(Array.isArray(r) ? r : (r.partners || [])))
+      .catch(() => {});
+    productAPI.all({ is_weight: 'true', limit: 200, page: 1 })
+      .then(r => setAllWeightProducts((r.products || []).filter(p => p.is_weight)))
       .catch(() => {});
   }, []);
 
@@ -417,45 +421,46 @@ export default function WeighScalePage() {
               </div>
             )}
 
-            {/* Product search */}
+            {/* Product grid */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                ค้นหาสินค้า (เฉพาะสินค้าชั่งน้ำหนัก)
+                สินค้าชั่งน้ำหนัก
               </label>
-              <div className="relative">
+              <div className="relative mb-2">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   value={productSearch}
                   onChange={e => setProductSearch(e.target.value)}
-                  className="input pl-8"
-                  placeholder="ชื่อสินค้าหรือ barcode..."
+                  className="input pl-8 text-sm"
+                  placeholder="ค้นหาสินค้า..."
                 />
               </div>
-              {productResults.length > 0 && (
-                <div className="border rounded-lg mt-1 max-h-44 overflow-y-auto bg-white shadow-sm z-10 relative">
-                  {productResults.length === 0 && (
-                    <p className="px-3 py-3 text-sm text-gray-400 text-center">ไม่พบสินค้าชั่งน้ำหนัก</p>
-                  )}
-                  {productResults.map(p => (
-                    <button key={p.id} onClick={() => selectProduct(p)}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 text-left border-b last:border-0 text-sm">
-                      {p.image_url
-                        ? <img src={p.image_url} alt="" className="w-9 h-9 rounded object-cover flex-shrink-0" />
-                        : <div className="w-9 h-9 rounded bg-gray-100 flex-shrink-0" />}
-                      <div className="flex-1 min-w-0">
-                        <span className="font-medium text-gray-900">{p.name}</span>
-                        <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-1.5 rounded">
-                          {p.product_type === 'fresh' ? 'ของสด' : p.product_type === 'innards' ? 'เครื่องใน' : 'แปรรูป'}
-                        </span>
-                      </div>
-                      <span className="text-blue-600 font-semibold flex-shrink-0">฿{fmt(p.sell_price)}/kg</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {productSearch.trim() && productResults.length === 0 && (
-                <p className="mt-1 text-xs text-gray-400">ไม่พบสินค้าชั่งน้ำหนัก — ตรวจสอบว่าสินค้าเปิดใช้งาน "ชั่งน้ำหนัก" ในระบบ</p>
-              )}
+              {(() => {
+                const display = productSearch.trim()
+                  ? productResults
+                  : allWeightProducts;
+                return display.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2 max-h-52 overflow-y-auto">
+                    {display.map(p => (
+                      <button key={p.id} onClick={() => selectProduct(p)}
+                        className={`flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all text-center ${selectedProduct?.id === p.id ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-blue-200 hover:bg-blue-50'}`}>
+                        {p.image_url
+                          ? <img src={p.image_url} alt="" className="w-14 h-14 rounded-lg object-contain bg-white" />
+                          : <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center">
+                              <Scale size={20} className="text-gray-300" />
+                            </div>}
+                        <p className="text-xs font-medium leading-tight line-clamp-2 w-full">{p.name}</p>
+                        <p className="text-xs font-bold text-blue-600">฿{fmt(p.sell_price)}/kg</p>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl">
+                    <Scale size={24} className="mx-auto mb-1 opacity-30" />
+                    {productSearch.trim() ? 'ไม่พบสินค้า' : 'ยังไม่มีสินค้าชั่งน้ำหนัก'}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Price calculator */}

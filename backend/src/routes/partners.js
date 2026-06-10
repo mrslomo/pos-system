@@ -24,9 +24,9 @@ router.get('/:id', auth, async (req, res, next) => {
     const partner = await query('SELECT * FROM partners WHERE id=$1', [req.params.id]);
     if (!partner.rows[0]) return res.status(404).json({ error: 'ไม่พบคู่ค้า' });
     const prices = await query(
-      `SELECT pp.*, p.name AS product_name, p.barcode, p.unit, p.sell_price AS default_price
+      `SELECT pp.*, p.name AS product_name, p.barcode, p.image_url, p.unit AS product_unit, p.sell_price AS default_price
        FROM partner_prices pp JOIN products p ON p.id = pp.product_id
-       WHERE pp.partner_id = $1 ORDER BY p.name`,
+       WHERE pp.partner_id = $1 ORDER BY p.name, pp.unit`,
       [req.params.id]
     );
     res.json({ ...partner.rows[0], special_prices: prices.rows });
@@ -65,37 +65,49 @@ router.put('/:id', auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Upsert special price for a partner
+// Upsert special price for a partner (unique per product+unit)
 router.post('/:id/prices', auth, async (req, res, next) => {
   try {
-    const { product_id, special_price, min_qty } = req.body;
+    const { product_id, special_price, min_qty, unit } = req.body;
     if (!product_id || !special_price) return res.status(400).json({ error: 'ต้องระบุสินค้าและราคา' });
+    // get product's default unit if not provided
+    let priceUnit = unit;
+    if (!priceUnit) {
+      const prod = await query('SELECT unit FROM products WHERE id=$1', [product_id]);
+      priceUnit = prod.rows[0]?.unit || 'kg';
+    }
     const r = await query(
-      `INSERT INTO partner_prices (partner_id, product_id, special_price, min_qty)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT (partner_id, product_id) DO UPDATE SET special_price=$3, min_qty=$4
+      `INSERT INTO partner_prices (partner_id, product_id, special_price, min_qty, unit)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (partner_id, product_id, unit) DO UPDATE SET special_price=$3, min_qty=$4
        RETURNING *`,
-      [req.params.id, product_id, special_price, min_qty || 1]
+      [req.params.id, product_id, special_price, min_qty || 1, priceUnit]
     );
     res.json(r.rows[0]);
   } catch (err) { next(err); }
 });
 
-// Delete special price
+// Delete special price (by product_id + unit)
 router.delete('/:id/prices/:product_id', auth, async (req, res, next) => {
   try {
-    await query('DELETE FROM partner_prices WHERE partner_id=$1 AND product_id=$2', [req.params.id, req.params.product_id]);
+    const { unit } = req.query;
+    if (unit) {
+      await query('DELETE FROM partner_prices WHERE partner_id=$1 AND product_id=$2 AND unit=$3', [req.params.id, req.params.product_id, unit]);
+    } else {
+      await query('DELETE FROM partner_prices WHERE partner_id=$1 AND product_id=$2', [req.params.id, req.params.product_id]);
+    }
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
-// Get partner's price for a specific product
+// Get partner's price for a specific product (lowest price / first match)
 router.get('/:id/price/:product_id', auth, async (req, res, next) => {
   try {
     const r = await query(
-      `SELECT pp.special_price, p.sell_price, p.name, p.unit FROM partner_prices pp
+      `SELECT pp.special_price, pp.unit, pp.min_qty, p.sell_price, p.name FROM partner_prices pp
        JOIN products p ON p.id = pp.product_id
-       WHERE pp.partner_id=$1 AND pp.product_id=$2`,
+       WHERE pp.partner_id=$1 AND pp.product_id=$2
+       ORDER BY pp.special_price ASC LIMIT 1`,
       [req.params.id, req.params.product_id]
     );
     res.json(r.rows[0] || null);

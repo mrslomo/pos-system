@@ -36,6 +36,21 @@ router.get('/me', auth, async (req, res) => {
   res.json(result.rows[0]);
 });
 
+// PIN login — identify cashier at POS without full re-auth
+router.post('/pin-login', auth, async (req, res, next) => {
+  try {
+    const { pin, branch_id } = req.body;
+    if (!pin) return res.status(400).json({ error: 'ต้องระบุ PIN' });
+    const branchId = branch_id || req.user.branch_id || 1;
+    const result = await query(
+      `SELECT id, name, role, branch_id FROM users WHERE pin=$1 AND branch_id=$2 AND is_active=true LIMIT 1`,
+      [pin, branchId]
+    );
+    if (!result.rows.length) return res.status(401).json({ error: 'PIN ไม่ถูกต้อง' });
+    res.json(result.rows[0]);
+  } catch (err) { next(err); }
+});
+
 router.put('/change-password', auth, async (req, res, next) => {
   try {
     const { oldPassword, newPassword } = req.body;

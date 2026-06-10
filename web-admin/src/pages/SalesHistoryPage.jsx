@@ -3,6 +3,7 @@ import { salesAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { format } from 'date-fns';
 import { th } from 'date-fns/locale';
+import { Printer } from 'lucide-react';
 
 export default function SalesHistoryPage() {
   const { user } = useAuth();
@@ -30,7 +31,48 @@ export default function SalesHistoryPage() {
   useEffect(() => { load(); }, [filters]);
 
   const fmt = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
-  const PAYMENT_LABELS = { cash: 'เงินสด', card: 'บัตร', promptpay: 'พร้อมเพย์' };
+  const PAYMENT_LABELS = { cash: 'เงินสด', card: 'บัตร', promptpay: 'พร้อมเพย์', konlakrueng: 'คนละครึ่ง', split: 'ชำระผสม' };
+
+  const printReceipt = (sale) => {
+    const fmtB = (n) => `฿${Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2})}`;
+    const w = window.open('', '_blank', 'width=340,height=700');
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>ใบเสร็จ</title>
+    <style>
+      @page{margin:0;size:80mm auto}*{box-sizing:border-box}
+      body{font-family:'Courier New',monospace;width:80mm;margin:0 auto;padding:8px 6px;font-size:13px;color:#000}
+      .c{text-align:center}.b{font-weight:bold}.lg{font-size:16px}
+      .dash{border-top:1px dashed #000;margin:6px 0}
+      .row{display:flex;justify-content:space-between;margin:2px 0}
+      .sub{font-size:11px;color:#555;margin-left:8px;margin-bottom:3px}
+      .ttl{font-weight:bold;font-size:15px}
+      @media print{button{display:none}}
+    </style></head><body>
+    <div class="c b lg">POS SYSTEM</div>
+    <div class="c">สาขาหลัก</div>
+    <div class="c" style="font-size:11px;color:#666">${new Date(sale.created_at).toLocaleString('th-TH')}</div>
+    <div class="dash"></div>
+    <div class="row"><span>เลขที่:</span><span class="b">${sale.receipt_number}</span></div>
+    <div class="row"><span>พนักงาน:</span><span>${sale.cashier_name||'-'}</span></div>
+    <div class="dash"></div>
+    ${(sale.items||[]).map(it=>`
+      <div class="row"><span style="flex:1">${it.product_name}</span><span>${fmtB(it.subtotal)}</span></div>
+      <div class="sub">${Number(it.quantity).toFixed(3)} × ${fmtB(it.unit_price)}</div>
+    `).join('')}
+    <div class="dash"></div>
+    <div class="row"><span>ยอดรวม</span><span>${fmtB(sale.subtotal||sale.total_amount)}</span></div>
+    ${Number(sale.discount_amount)>0?`<div class="row"><span>ส่วนลด</span><span>-${fmtB(sale.discount_amount)}</span></div>`:''}
+    <div class="row ttl"><span>ยอดสุทธิ</span><span>${fmtB(sale.total_amount)}</span></div>
+    <div class="dash"></div>
+    <div class="row"><span>${PAYMENT_LABELS[sale.payment_method]||sale.payment_method}</span><span>${fmtB(sale.payment_amount)}</span></div>
+    ${Number(sale.change_amount)>0?`<div class="row"><span>เงินทอน</span><span>${fmtB(sale.change_amount)}</span></div>`:''}
+    ${sale.notes&&sale.payment_method==='split'?`<div style="font-size:11px;color:#555;margin-top:2px">${sale.notes}</div>`:''}
+    <div class="dash"></div>
+    <div class="c" style="margin-top:8px">ขอบคุณที่ใช้บริการ</div>
+    <br><br>
+    <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),800)}</script>
+    </body></html>`);
+    w.document.close();
+  };
 
   const totalRevenue = sales.reduce((s, sale) => s + Number(sale.total_amount || 0), 0);
 
@@ -98,7 +140,13 @@ export default function SalesHistoryPage() {
           <div className="card h-full overflow-y-auto">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold">รายละเอียดบิล</h3>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">×</button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => printReceipt(selected)}
+                  className="flex items-center gap-1 text-xs px-2 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  <Printer size={12} /> ปริ้น
+                </button>
+                <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+              </div>
             </div>
             <div className="space-y-1 text-sm mb-3">
               <div className="flex justify-between"><span className="text-gray-500">เลขที่:</span><span className="font-mono text-xs">{selected.receipt_number}</span></div>

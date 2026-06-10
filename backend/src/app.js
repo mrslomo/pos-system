@@ -25,6 +25,17 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/branches', require('./routes/branches'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/payment-notify', require('./routes/payment-notify'));
+app.use('/api/partners', require('./routes/partners'));
+app.use('/api/purchase-bills', require('./routes/purchase-bills'));
+app.use('/api/delivery-bills', require('./routes/delivery-bills'));
+app.use('/api/held-bills', require('./routes/held-bills'));
+app.use('/api/stock-returns', require('./routes/stock-returns'));
+app.use('/api/bank-accounts', require('./routes/bank-accounts'));
+app.use('/api/bulk-stock', require('./routes/bulk-stock'));
+app.use('/api/uploads', require('./routes/uploads'));
+app.use('/api/shifts', require('./routes/shifts'));
+app.use('/api/stock-counts', require('./routes/stock-counts'));
+app.use('/api/deterioration', require('./routes/deterioration'));
 
 // Scale endpoints
 const scaleService = require('./services/scaleService');

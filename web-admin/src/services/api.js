@@ -96,7 +96,7 @@ export const partnerAPI = {
   create: (data) => api.post('/partners', data),
   update: (id, data) => api.put(`/partners/${id}`, data),
   addPrice: (id, data) => api.post(`/partners/${id}/prices`, data),
-  removePrice: (id, product_id) => api.delete(`/partners/${id}/prices/${product_id}`),
+  removePrice: (id, product_id, unit) => api.delete(`/partners/${id}/prices/${product_id}${unit ? `?unit=${encodeURIComponent(unit)}` : ''}`),
   getPrice: (id, product_id) => api.get(`/partners/${id}/price/${product_id}`),
 };
 

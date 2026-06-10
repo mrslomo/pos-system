@@ -4,13 +4,17 @@ const { auth } = require('../middleware/auth');
 
 router.use(auth);
 
-// GET / — list counts for branch
+// GET / — list counts for branch (with summary stats)
 router.get('/', async (req, res, next) => {
   const { branch_id, date, status } = req.query;
   try {
     let q = `
       SELECT sc.*, u.name as created_by_name, cb.name as closed_by_name,
-        (SELECT COUNT(*) FROM stock_count_items WHERE count_id = sc.id) as item_count
+        (SELECT COUNT(*) FROM stock_count_items WHERE count_id = sc.id)::int as item_count,
+        (SELECT COUNT(*) FROM stock_count_items WHERE count_id = sc.id AND counted_qty IS NOT NULL)::int as counted_count,
+        (SELECT COUNT(*) FROM stock_count_items WHERE count_id = sc.id AND counted_qty IS NOT NULL AND counted_qty < system_qty - 0.001)::int as deficit_count,
+        (SELECT COUNT(*) FROM stock_count_items WHERE count_id = sc.id AND counted_qty IS NOT NULL AND counted_qty > system_qty + 0.001)::int as surplus_count,
+        (SELECT COALESCE(SUM(ABS(counted_qty - system_qty) * cost_price),0) FROM stock_count_items WHERE count_id = sc.id AND counted_qty IS NOT NULL) as total_diff_cost
       FROM stock_counts sc
       LEFT JOIN users u ON u.id = sc.created_by
       LEFT JOIN users cb ON cb.id = sc.closed_by
@@ -19,15 +23,15 @@ router.get('/', async (req, res, next) => {
     if (branch_id) { p.push(branch_id); q += ` AND sc.branch_id=$${p.length}`; }
     if (date)      { p.push(date);      q += ` AND sc.count_date=$${p.length}`; }
     if (status)    { p.push(status);    q += ` AND sc.status=$${p.length}`; }
-    q += ` ORDER BY sc.created_at DESC LIMIT 30`;
+    q += ` ORDER BY sc.created_at DESC LIMIT 60`;
     const { rows } = await pool.query(q, p);
     res.json(rows);
   } catch (err) { next(err); }
 });
 
-// POST / — create new count (snapshot current stock)
+// POST / — create new count (snapshot or carry-forward from previous count)
 router.post('/', async (req, res, next) => {
-  const { branch_id, notes } = req.body;
+  const { branch_id, notes, carry_from_count_id } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -39,20 +43,34 @@ router.post('/', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'มีการนับสต๊อกที่ยังเปิดอยู่สำหรับวันนี้' });
     }
+    const carryNote = carry_from_count_id ? '[ยกยอดจากครั้งก่อน] ' : '';
     const { rows: [count] } = await client.query(
       `INSERT INTO stock_counts (branch_id, notes, created_by) VALUES ($1,$2,$3) RETURNING *`,
-      [branch_id, notes || null, req.user.id]
+      [branch_id, (carryNote + (notes || '')).trim() || null, req.user.id]
     );
-    // Snapshot: total stock per product across all locations
-    await client.query(`
-      INSERT INTO stock_count_items (count_id, product_id, product_name, system_qty, cost_price)
-      SELECT $1, p.id, p.name,
-        COALESCE((SELECT SUM(quantity) FROM stock WHERE product_id=p.id AND branch_id=$2), 0),
-        p.cost_price
-      FROM products p
-      WHERE p.is_active=true
-      ORDER BY p.name
-    `, [count.id, branch_id]);
+    if (carry_from_count_id) {
+      // Carry-forward: use previous count's counted_qty as today's system_qty
+      await client.query(`
+        INSERT INTO stock_count_items (count_id, product_id, product_name, system_qty, cost_price)
+        SELECT $1, sci.product_id, sci.product_name,
+          COALESCE(sci.counted_qty, sci.system_qty),
+          sci.cost_price
+        FROM stock_count_items sci
+        WHERE sci.count_id = $2
+        ORDER BY sci.product_name
+      `, [count.id, carry_from_count_id]);
+    } else {
+      // Normal: snapshot current stock
+      await client.query(`
+        INSERT INTO stock_count_items (count_id, product_id, product_name, system_qty, cost_price)
+        SELECT $1, p.id, p.name,
+          COALESCE((SELECT SUM(quantity) FROM stock WHERE product_id=p.id AND branch_id=$2), 0),
+          p.cost_price
+        FROM products p
+        WHERE p.is_active=true
+        ORDER BY p.name
+      `, [count.id, branch_id]);
+    }
     await client.query('COMMIT');
     res.status(201).json(count);
   } catch (err) { await client.query('ROLLBACK'); next(err); }
