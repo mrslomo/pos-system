@@ -179,8 +179,19 @@ router.post('/processing', auth, async (req, res, next) => {
         [procId, o.product_id || null, o.output_name, oQty, o.unit || 'kg', allocatedCost.toFixed(2), costPerUnitOut.toFixed(4), o.sell_price || 0]
       );
 
-      // Add output to product front stock if product_id given
-      if (o.product_id) {
+      if (o.is_lab) {
+        // Return to bulk stock for lab processing (แช่แข็ง)
+        await client.query(
+          `UPDATE bulk_items SET current_qty = current_qty + $1 WHERE id=$2`,
+          [oQty, bulk_item_id]
+        );
+        await client.query(
+          `INSERT INTO bulk_stock_in (bulk_item_id, quantity, cost_per_unit, total_cost, reference, user_id, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [bulk_item_id, oQty, costPerUnit, (oQty * costPerUnit).toFixed(2), processNumber, req.user.id, `แลป (แช่แข็ง) จากการซอย ${processNumber}`]
+        );
+      } else if (o.product_id) {
+        // Add output to product front stock
         await client.query(
           `INSERT INTO stock (product_id, branch_id, location, quantity) VALUES ($1,$2,'front',$3)
            ON CONFLICT (product_id, branch_id, location) DO UPDATE SET quantity = stock.quantity + $3`,
