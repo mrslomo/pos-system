@@ -213,6 +213,23 @@ router.post('/processing', auth, async (req, res, next) => {
   } finally { client.release(); }
 });
 
+// ─── Lab Receipts (from slicing) ─────────────────────────────────────────────
+
+router.get('/lab-receipts', auth, async (req, res, next) => {
+  try {
+    const branchId = req.query.branch_id || req.user.branch_id || 1;
+    const r = await query(
+      `SELECT bsi.*, bi.name AS bulk_item_name, bi.unit, bi.current_qty
+       FROM bulk_stock_in bsi
+       JOIN bulk_items bi ON bi.id = bsi.bulk_item_id
+       WHERE bi.branch_id=$1 AND bsi.notes LIKE 'แลป%'
+       ORDER BY bsi.created_at DESC LIMIT 50`,
+      [branchId]
+    );
+    res.json(r.rows);
+  } catch (err) { next(err); }
+});
+
 // ─── Cost Analysis ───────────────────────────────────────────────────────────
 
 router.get('/cost-analysis', auth, async (req, res, next) => {
