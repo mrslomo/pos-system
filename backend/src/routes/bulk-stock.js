@@ -7,12 +7,13 @@ const { auth } = require('../middleware/auth');
 router.get('/items', auth, async (req, res, next) => {
   try {
     const branchId = req.query.branch_id || req.user.branch_id || 1;
+    const isLab = req.query.lab === 'true';
     const result = await query(
       `SELECT bi.*,
         (SELECT COALESCE(SUM(quantity),0) FROM bulk_stock_in WHERE bulk_item_id=bi.id) AS total_received,
         (SELECT COALESCE(SUM(input_qty),0) FROM stock_processing WHERE bulk_item_id=bi.id) AS total_processed
-       FROM bulk_items bi WHERE bi.branch_id=$1 AND bi.is_active=true ORDER BY bi.name`,
-      [branchId]
+       FROM bulk_items bi WHERE bi.branch_id=$1 AND bi.is_active=true AND bi.is_lab=$2 ORDER BY bi.name`,
+      [branchId, isLab]
     );
     res.json(result.rows);
   } catch (err) { next(err); }
@@ -180,15 +181,28 @@ router.post('/processing', auth, async (req, res, next) => {
       );
 
       if (o.is_lab) {
-        // Return to bulk stock for lab processing (แช่แข็ง)
+        // Find or create a dedicated lab bulk item for this material
+        const labName = `[แลป] ${bulkItem.rows[0].name}`;
+        let labItem = await client.query(
+          `SELECT id FROM bulk_items WHERE name=$1 AND is_lab=TRUE AND branch_id=$2`,
+          [labName, branchId]
+        );
+        if (!labItem.rows[0]) {
+          labItem = await client.query(
+            `INSERT INTO bulk_items (name, unit, is_lab, branch_id, cost_per_unit, current_qty)
+             VALUES ($1,$2,TRUE,$3,$4,0) RETURNING *`,
+            [labName, o.unit || bulkItem.rows[0].unit, branchId, costPerUnit]
+          );
+        }
+        const labItemId = labItem.rows[0].id;
         await client.query(
-          `UPDATE bulk_items SET current_qty = current_qty + $1 WHERE id=$2`,
-          [oQty, bulk_item_id]
+          `UPDATE bulk_items SET current_qty = current_qty + $1, cost_per_unit = $2 WHERE id=$3`,
+          [oQty, costPerUnit.toFixed(2), labItemId]
         );
         await client.query(
           `INSERT INTO bulk_stock_in (bulk_item_id, quantity, cost_per_unit, total_cost, reference, user_id, notes)
            VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [bulk_item_id, oQty, costPerUnit, (oQty * costPerUnit).toFixed(2), processNumber, req.user.id, `แลป (แช่แข็ง) จากการซอย ${processNumber}`]
+          [labItemId, oQty, costPerUnit, (oQty * costPerUnit).toFixed(2), processNumber, req.user.id, `แลป จากการซอย ${processNumber}`]
         );
       } else if (o.product_id) {
         // Add output to product front stock
@@ -222,7 +236,7 @@ router.get('/lab-receipts', auth, async (req, res, next) => {
       `SELECT bsi.*, bi.name AS bulk_item_name, bi.unit, bi.current_qty
        FROM bulk_stock_in bsi
        JOIN bulk_items bi ON bi.id = bsi.bulk_item_id
-       WHERE bi.branch_id=$1 AND bsi.notes LIKE 'แลป%'
+       WHERE bi.branch_id=$1 AND bi.is_lab=TRUE
        ORDER BY bsi.created_at DESC LIMIT 50`,
       [branchId]
     );

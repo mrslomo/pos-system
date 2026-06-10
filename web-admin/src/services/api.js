@@ -145,6 +145,7 @@ export const bulkStockAPI = {
   processingGet: (id) => api.get(`/bulk-stock/processing/${id}`),
   processingCreate: (data) => api.post('/bulk-stock/processing', data),
   costAnalysis: (params) => api.get('/bulk-stock/cost-analysis', { params }),
+  labReceipts: (params) => api.get('/bulk-stock/lab-receipts', { params }),
 };
 
 export const uploadAPI = {

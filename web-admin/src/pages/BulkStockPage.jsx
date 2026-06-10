@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { bulkStockAPI, productAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { Plus, Search, ChevronRight, X, Scissors, PackagePlus, TrendingDown, TrendingUp, BarChart2 } from 'lucide-react';
+import { Plus, Search, ChevronRight, ChevronDown, X, Scissors, PackagePlus, TrendingDown, TrendingUp, BarChart2 } from 'lucide-react';
 
 const today = () => new Date().toISOString().split('T')[0];
 const fmt = (n, d = 2) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: d });
@@ -19,7 +19,7 @@ function BulkItemsTab({ user }) {
   const [stockInForm, setStockInForm] = useState({ quantity: '', cost_per_unit: '', supplier_name: '', reference: '', notes: '' });
   const [saving, setSaving] = useState(false);
 
-  const load = () => { setLoading(true); bulkStockAPI.items({ branch_id: user.branch_id }).then(setItems).catch(() => {}).finally(() => setLoading(false)); };
+  const load = () => { setLoading(true); bulkStockAPI.items({ branch_id: user.branch_id, lab: false }).then(setItems).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(() => { load(); }, []);
 
   const handleCreate = async () => {
@@ -180,7 +180,7 @@ function BulkItemsTab({ user }) {
 }
 
 // ─── Tab: ซอยสต๊อก / แลป ─────────────────────────────────────────────────────
-function ProcessingTab({ user, mode = 'cut' }) {
+function ProcessingTab({ user, mode = 'cut', onGoToLab }) {
   const isLab = mode === 'lab';
   const tabLabel = isLab ? 'แลป' : 'ซอยสต็อก';
   const btnLabel = isLab ? 'บันทึกการทำแลป' : 'บันทึกการซอย';
@@ -191,25 +191,59 @@ function ProcessingTab({ user, mode = 'cut' }) {
   const [viewProc, setViewProc] = useState(null);
   const [bulkItems, setBulkItems] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
+  const [expandedRows, setExpandedRows] = useState({});   // { [id]: outputs[] | 'loading' }
+  const [labReceipts, setLabReceipts] = useState([]);
+
+  const toggleRow = async (id) => {
+    if (expandedRows[id]) {
+      setExpandedRows(prev => { const n = { ...prev }; delete n[id]; return n; });
+      return;
+    }
+    setExpandedRows(prev => ({ ...prev, [id]: 'loading' }));
+    try {
+      const r = await bulkStockAPI.processingGet(id);
+      setExpandedRows(prev => ({ ...prev, [id]: r.outputs || [] }));
+    } catch {
+      setExpandedRows(prev => { const n = { ...prev }; delete n[id]; return n; });
+    }
+  };
 
   // Form
   const [selectedBulk, setSelectedBulk] = useState(null);
   const [inputQty, setInputQty] = useState('');
-  const [outputs, setOutputs] = useState([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]);
+  const [outputs, setOutputs] = useState([{ output_name: '', quantity: '', unit: 'kg', product_id: '', _search: '', _open: false }]);
   const [procNotes, setProcNotes] = useState('');
   const [spoiledQty, setSpoiledQty] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = () => { setLoading(true); bulkStockAPI.processingList({ branch_id: user.branch_id, lab: isLab }).then(setList).catch(() => {}).finally(() => setLoading(false)); };
+  const loadLabReceipts = () => { if (isLab) bulkStockAPI.labReceipts({ branch_id: user.branch_id }).then(setLabReceipts).catch(() => {}); };
   useEffect(() => {
     load();
-    bulkStockAPI.items({ branch_id: user.branch_id }).then(setBulkItems).catch(() => {});
+    // Lab tab uses is_lab=true bulk items; slicing tab uses is_lab=false
+    bulkStockAPI.items({ branch_id: user.branch_id, lab: isLab }).then(setBulkItems).catch(() => {});
     productAPI.all({ limit: 500 }).then(r => setAllProducts(Array.isArray(r) ? r : r.products || [])).catch(() => {});
+    loadLabReceipts();
   }, []);
 
-  const addOutput = () => setOutputs(prev => [...prev, { output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]);
+  const addOutput = () => setOutputs(prev => [...prev, { output_name: '', quantity: '', unit: 'kg', product_id: '', _search: '', _open: false }]);
   const updateOutput = (i, field, val) => setOutputs(prev => prev.map((o, idx) => idx === i ? { ...o, [field]: val } : o));
   const removeOutput = (i) => setOutputs(prev => prev.filter((_, idx) => idx !== i));
+
+  const selectOutputProduct = (i, product) => {
+    setOutputs(prev => prev.map((o, idx) => idx === i ? {
+      ...o,
+      product_id: String(product.id),
+      output_name: o.output_name || product.name,
+      unit: product.unit || o.unit,
+      _search: product.name,
+      _open: false,
+    } : o));
+  };
+
+  const clearOutputProduct = (i) => {
+    setOutputs(prev => prev.map((o, idx) => idx === i ? { ...o, product_id: '', _search: '', _open: false } : o));
+  };
 
   const totalOutput = outputs.reduce((s, o) => s + (parseFloat(o.quantity) || 0), 0);
   const spoiledQtyNum = parseFloat(spoiledQty) || 0;
@@ -221,12 +255,12 @@ function ProcessingTab({ user, mode = 'cut' }) {
     if (!selectedBulk || !inputQty || outputs.some(o => !o.output_name || !o.quantity)) return toast.error('กรุณากรอกข้อมูลให้ครบ');
     setSaving(true);
     try {
-      const allOutputs = [...outputs.map(o => ({ ...o, quantity: parseFloat(o.quantity), product_id: o.product_id || null, sell_price: parseFloat(o.sell_price) || 0 }))];
+      const allOutputs = [...outputs.map(o => ({ ...o, quantity: parseFloat(o.quantity), product_id: o.product_id ? parseInt(o.product_id) : null, sell_price: 0, is_lab: o._is_lab || false }))];
       if (spoiledQtyNum > 0) allOutputs.push({ output_name: 'สินค้าเสื่อม', quantity: spoiledQtyNum, unit: selectedBulk.unit || 'kg', product_id: null, sell_price: 0 });
       await bulkStockAPI.processingCreate({ bulk_item_id: selectedBulk.id, input_qty: parseFloat(inputQty), outputs: allOutputs, notes: procNotes, branch_id: user.branch_id, lab: isLab });
       toast.success('บันทึกการซอยสำเร็จ');
-      setShowCreate(false); setSelectedBulk(null); setInputQty(''); setOutputs([{ output_name: '', quantity: '', unit: 'kg', product_id: '', sell_price: '' }]); setProcNotes(''); setSpoiledQty('');
-      load();
+      setShowCreate(false); setSelectedBulk(null); setInputQty(''); setOutputs([{ output_name: '', quantity: '', unit: 'kg', product_id: '', _search: '', _open: false }]); setProcNotes(''); setSpoiledQty('');
+      load(); loadLabReceipts();
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
   };
 
@@ -237,7 +271,42 @@ function ProcessingTab({ user, mode = 'cut' }) {
 
   return (
     <div>
-      <div className="flex justify-end mb-4">
+      {isLab && labReceipts.length > 0 && (
+        <div className="card mb-4 border-l-4 border-l-purple-400">
+          <h3 className="font-semibold text-purple-700 mb-3 flex items-center gap-2">🔬 วัตถุดิบที่รับมาจากการซอย</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-purple-50">
+                <tr>
+                  {['อ้างอิง','วัตถุดิบ','จำนวนที่รับ','ต้นทุน/หน่วย','สต๊อกคงเหลือ','วันที่'].map(h => (
+                    <th key={h} className="text-left px-3 py-2 font-semibold text-purple-600">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {labReceipts.map(r => (
+                  <tr key={r.id} className="border-t hover:bg-purple-50/40">
+                    <td className="px-3 py-2 font-mono text-purple-600 text-xs">{r.reference}</td>
+                    <td className="px-3 py-2 font-medium">{r.bulk_item_name}</td>
+                    <td className="px-3 py-2 text-green-600 font-bold">{fmt(r.quantity, 3)} {r.unit}</td>
+                    <td className="px-3 py-2">฿{fmt(r.cost_per_unit)}/{r.unit}</td>
+                    <td className="px-3 py-2 text-blue-600 font-medium">{fmt(r.current_qty, 3)} {r.unit}</td>
+                    <td className="px-3 py-2 text-gray-400 text-xs">{new Date(r.created_at).toLocaleDateString('th-TH')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">วัตถุดิบเหล่านี้พร้อมสำหรับการทำแลป กด "บันทึกการทำแลป" เพื่อประมวลผล</p>
+        </div>
+      )}
+
+      <div className="flex justify-between items-center mb-4">
+        {!isLab && onGoToLab ? (
+          <button onClick={onGoToLab} className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 text-sm font-medium border border-purple-200">
+            🔬 ไปหน้าแลป
+          </button>
+        ) : <div />}
         <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2"><Scissors size={16} /> {btnLabel}</button>
       </div>
 
@@ -249,26 +318,63 @@ function ProcessingTab({ user, mode = 'cut' }) {
           <tbody>
             {loading ? <tr><td colSpan={8} className="text-center py-10 text-gray-400">กำลังโหลด...</td></tr>
               : list.length === 0 ? <tr><td colSpan={8} className="text-center py-10 text-gray-400">ยังไม่มีรายการ</td></tr>
-              : list.map(p => (
-              <tr key={p.id} className="border-b hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono text-purple-600 font-medium">{p.process_number}</td>
-                <td className="px-4 py-3">{new Date(p.created_at).toLocaleDateString('th-TH')}</td>
-                <td className="px-4 py-3">{p.bulk_item_name}</td>
-                <td className="px-4 py-3">{fmt(p.input_qty, 3)} {p.unit}</td>
-                <td className="px-4 py-3 text-green-600">{fmt(p.total_output_qty, 3)} {p.unit}</td>
-                <td className="px-4 py-3">
-                  <span className={`font-medium ${parseFloat(p.waste_pct) > 10 ? 'text-red-600' : 'text-orange-500'}`}>
-                    {fmt(p.waste_qty, 3)} ({p.waste_pct}%)
-                  </span>
-                </td>
-                <td className="px-4 py-3">฿{fmt(p.total_input_cost)}</td>
-                <td className="px-4 py-3">
-                  <button onClick={() => handleView(p.id)} className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 flex items-center gap-1">
-                    <ChevronRight size={12} /> ดูรายละเอียด
-                  </button>
-                </td>
-              </tr>
-            ))}
+              : list.map(p => {
+                const isExpanded = !!expandedRows[p.id];
+                const outputs = expandedRows[p.id];
+                return (
+                  <React.Fragment key={p.id}>
+                    <tr className={`border-b hover:bg-gray-50 ${isExpanded ? 'bg-purple-50/40' : ''}`}>
+                      <td className="px-4 py-3 font-mono text-purple-600 font-medium">{p.process_number}</td>
+                      <td className="px-4 py-3">{new Date(p.created_at).toLocaleDateString('th-TH')}</td>
+                      <td className="px-4 py-3">{p.bulk_item_name}</td>
+                      <td className="px-4 py-3">{fmt(p.input_qty, 3)} {p.unit}</td>
+                      <td className="px-4 py-3 text-green-600">{fmt(p.total_output_qty, 3)} {p.unit}</td>
+                      <td className="px-4 py-3">
+                        <span className={`font-medium ${parseFloat(p.waste_pct) > 10 ? 'text-red-600' : 'text-orange-500'}`}>
+                          {fmt(p.waste_qty, 3)} ({p.waste_pct}%)
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">฿{fmt(p.total_input_cost)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-1.5">
+                          <button onClick={() => toggleRow(p.id)}
+                            className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${isExpanded ? 'bg-purple-100 text-purple-700' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'}`}>
+                            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            แยกมา
+                          </button>
+                          <button onClick={() => handleView(p.id)} className="text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded hover:bg-gray-100">
+                            รายละเอียด
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="border-b bg-purple-50/20">
+                        <td colSpan={8} className="px-6 py-3">
+                          {outputs === 'loading' ? (
+                            <p className="text-xs text-gray-400 py-1">กำลังโหลด...</p>
+                          ) : (
+                            <div>
+                              <p className="text-xs font-semibold text-purple-700 mb-2">ผลผลิตจาก {p.process_number} — {p.bulk_item_name}</p>
+                              <div className="flex flex-wrap gap-2">
+                                {outputs.map((o, i) => (
+                                  <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm ${o.product_id ? 'bg-white border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                                    <span className={`font-medium ${o.product_id ? 'text-green-700' : 'text-gray-600'}`}>{o.output_name}</span>
+                                    <span className="text-gray-500">{fmt(o.quantity, 3)} {o.unit}</span>
+                                    {o.sell_price > 0 && <span className="text-blue-600 text-xs">฿{fmt(o.sell_price)}/หน่วย</span>}
+                                    <span className="text-gray-400 text-xs">ต้นทุน ฿{fmt(o.cost_per_unit, 4)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })
+            }
           </tbody>
         </table>
       </div>
@@ -320,23 +426,80 @@ function ProcessingTab({ user, mode = 'cut' }) {
                   <button onClick={addOutput} className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"><Plus size={14} /> เพิ่มส่วน</button>
                 </div>
                 <div className="space-y-2">
-                  {outputs.map((o, i) => (
-                    <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                      <input className="input col-span-3 text-sm" placeholder="ชื่อส่วน เช่น เนื้อ" value={o.output_name} onChange={e => updateOutput(i, 'output_name', e.target.value)} />
-                      <input type="number" className="input col-span-2 text-sm" placeholder="จำนวน" value={o.quantity} onChange={e => updateOutput(i, 'quantity', e.target.value)} step="0.001" />
-                      <input className="input col-span-1 text-sm" placeholder="หน่วย" value={o.unit} onChange={e => updateOutput(i, 'unit', e.target.value)} />
-                      <select className="input col-span-3 text-sm" value={o.product_id} onChange={e => updateOutput(i, 'product_id', e.target.value)}>
-                        <option value="">-- สินค้า (ไม่บังคับ) --</option>
-                        {allProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                      <input type="number" className="input col-span-2 text-sm" placeholder="ราคาขาย" value={o.sell_price} onChange={e => updateOutput(i, 'sell_price', e.target.value)} step="0.01" />
-                      <button onClick={() => removeOutput(i)} className="col-span-1 text-red-400 hover:text-red-600 flex justify-center"><X size={14} /></button>
-                    </div>
-                  ))}
+                  {outputs.map((o, i) => {
+                    const filtered = allProducts.filter(p =>
+                      !o._search || p.name.toLowerCase().includes(o._search.toLowerCase()) || (p.barcode || '').includes(o._search)
+                    ).slice(0, 15);
+                    return (
+                      <div key={i} className="grid grid-cols-12 gap-2 items-start">
+                        {/* Product search */}
+                        <div className="col-span-4 relative">
+                          <div className="flex gap-1">
+                            <input
+                              className="input text-sm flex-1 min-w-0"
+                              placeholder="ค้นหาสินค้า..."
+                              value={o._search}
+                              onChange={e => {
+                                updateOutput(i, '_search', e.target.value);
+                                updateOutput(i, '_open', true);
+                                if (!e.target.value) clearOutputProduct(i);
+                              }}
+                              onFocus={() => updateOutput(i, '_open', true)}
+                            />
+                            {o.product_id && (
+                              <button onClick={() => clearOutputProduct(i)} className="text-gray-400 hover:text-red-500 flex-shrink-0 px-1">
+                                <X size={13} />
+                              </button>
+                            )}
+                          </div>
+                          {o._open && (
+                            <div className="absolute z-20 top-full left-0 right-0 mt-0.5 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              {!isLab && (
+                                <button onMouseDown={() => {
+                                  setOutputs(prev => prev.map((o2, idx) => idx === i ? {
+                                    ...o2,
+                                    output_name: 'แลป (แช่แข็ง)',
+                                    unit: selectedBulk?.unit || 'kg',
+                                    _search: '🔬 แลป (แช่แข็ง)',
+                                    _open: false,
+                                    _is_lab: true,
+                                  } : o2));
+                                }}
+                                  className="w-full text-left px-3 py-2 text-sm font-medium bg-purple-50 hover:bg-purple-100 border-b flex items-center gap-2 text-purple-700">
+                                  🔬 <span className="flex-1">แลป (แช่แข็ง)</span>
+                                  <span className="text-xs text-purple-400">คืนสต๊อกไปแลป</span>
+                                </button>
+                              )}
+                              {filtered.map(p => (
+                                <button key={p.id} onMouseDown={() => selectOutputProduct(i, p)}
+                                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50 border-b last:border-0 flex items-center justify-between gap-2">
+                                  <span className="truncate">{p.name}</span>
+                                  <span className="text-gray-400 text-xs flex-shrink-0">{p.unit}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {o._is_lab && <p className="text-xs text-purple-600 mt-0.5 px-0.5">🔬 ส่งไปแลป</p>}
+                          {o.product_id && !o._is_lab && <p className="text-xs text-green-600 mt-0.5 px-0.5">✓ ผูกสินค้าแล้ว</p>}
+                        </div>
+                        {/* Name */}
+                        <input className="input col-span-3 text-sm" placeholder="ชื่อส่วน" value={o.output_name} onChange={e => updateOutput(i, 'output_name', e.target.value)} />
+                        {/* Quantity */}
+                        <input type="number" className="input col-span-2 text-sm" placeholder="จำนวน" value={o.quantity} onChange={e => updateOutput(i, 'quantity', e.target.value)} step="0.001" />
+                        {/* Unit */}
+                        <select className="input col-span-2 text-sm" value={o.unit} onChange={e => updateOutput(i, 'unit', e.target.value)}>
+                          {['kg','g','piece','pack','box','bag','bottle','bunch'].map(u => <option key={u} value={u}>{u}</option>)}
+                          {o.unit && !['kg','g','piece','pack','box','bag','bottle','bunch'].includes(o.unit) && <option value={o.unit}>{o.unit}</option>}
+                        </select>
+                        {/* Remove */}
+                        <button onClick={() => removeOutput(i)} className="col-span-1 text-red-400 hover:text-red-600 flex justify-center pt-2"><X size={14} /></button>
+                      </div>
+                    );
+                  })}
                 </div>
                 {selectedBulk && inputQty && outputs.length > 0 && (
                   <div className="mt-2 text-xs text-gray-500">
-                    ต้นทุนจะถูกจัดสรรตามสัดส่วนน้ำหนักผลผลิต (ต้นทุนรวม ÷ น้ำหนักผลผลิตรวม)
+                    ต้นทุนจะถูกจัดสรรตามสัดส่วนน้ำหนักผลผลิต • ราคาขายอ้างอิงจากหน้าสินค้า
                   </div>
                 )}
               </div>
@@ -510,7 +673,7 @@ export default function BulkStockPage() {
         ))}
       </div>
       {tab === 'stock' && <BulkItemsTab user={user} />}
-      {tab === 'processing' && <ProcessingTab user={user} mode="cut" />}
+      {tab === 'processing' && <ProcessingTab user={user} mode="cut" onGoToLab={() => setTab('lab')} />}
       {tab === 'lab' && <ProcessingTab user={user} mode="lab" />}
       {tab === 'cost' && <CostAnalysisTab user={user} />}
     </div>
