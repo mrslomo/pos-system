@@ -277,6 +277,60 @@ router.post('/processing', auth, async (req, res, next) => {
   } finally { client.release(); }
 });
 
+router.delete('/processing/:id', auth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const proc = await client.query('SELECT * FROM stock_processing WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!proc.rows[0]) throw { status: 404, error: 'ไม่พบรายการ' };
+    const p = proc.rows[0];
+
+    const outputs = await client.query('SELECT * FROM stock_processing_outputs WHERE processing_id=$1', [req.params.id]);
+
+    // Reverse product stock
+    for (const o of outputs.rows) {
+      if (o.product_id) {
+        await client.query(
+          `UPDATE stock SET quantity = GREATEST(0, quantity - $1)
+           WHERE product_id=$2 AND branch_id=$3 AND location='front'`,
+          [o.quantity, o.product_id, p.branch_id]
+        );
+      }
+    }
+
+    // Reverse lab bulk stock-in
+    const labIn = await client.query(
+      `SELECT bsi.*, bsi.bulk_item_id AS lab_item_id FROM bulk_stock_in bsi
+       JOIN bulk_items bi ON bi.id=bsi.bulk_item_id
+       WHERE bsi.reference=$1 AND bi.is_lab=TRUE`,
+      [p.process_number]
+    );
+    for (const li of labIn.rows) {
+      await client.query(
+        `UPDATE bulk_items SET current_qty = GREATEST(0, current_qty - $1) WHERE id=$2`,
+        [li.quantity, li.lab_item_id]
+      );
+      await client.query('DELETE FROM bulk_stock_in WHERE id=$1', [li.id]);
+    }
+
+    // Restore bulk item stock
+    await client.query(
+      `UPDATE bulk_items SET current_qty = current_qty + $1 WHERE id=$2`,
+      [p.input_qty, p.bulk_item_id]
+    );
+
+    await client.query('DELETE FROM stock_processing_outputs WHERE processing_id=$1', [req.params.id]);
+    await client.query('DELETE FROM stock_processing WHERE id=$1', [req.params.id]);
+
+    await client.query('COMMIT');
+    res.json({ message: 'ลบการซอยแล้ว' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally { client.release(); }
+});
+
 // ─── Lab Receipts (from slicing) ─────────────────────────────────────────────
 
 router.get('/lab-receipts', auth, async (req, res, next) => {

@@ -329,8 +329,27 @@ function ProcessingTab({ user, mode = 'cut', onGoToLab }) {
   const [spoiledQty, setSpoiledQty] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
   const load = () => { setLoading(true); bulkStockAPI.processingList({ branch_id: user.branch_id, lab: isLab }).then(setList).catch(() => {}).finally(() => setLoading(false)); };
   const loadLabReceipts = () => { if (isLab) bulkStockAPI.labReceipts({ branch_id: user.branch_id }).then(setLabReceipts).catch(() => {}); };
+
+  const handleDelete = async (p) => {
+    if (!window.confirm(`ลบการซอย "${p.process_number}" ?\n\nสต๊อกวัตถุดิบ ${p.input_qty} ${p.unit} จะถูกคืนกลับ\nสต๊อกสินค้าที่ได้จากการซอยจะถูกหักออก`)) return;
+    try {
+      await bulkStockAPI.processingDelete(p.id);
+      toast.success(`ลบ ${p.process_number} แล้ว`);
+      load();
+    } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); }
+  };
+
+  const filteredList = list.filter(p => {
+    const d = new Date(p.created_at);
+    if (dateFrom && d < new Date(dateFrom)) return false;
+    if (dateTo && d > new Date(dateTo + 'T23:59:59')) return false;
+    return true;
+  });
   useEffect(() => {
     load();
     // Lab tab uses is_lab=true bulk items; slicing tab uses is_lab=false
@@ -414,12 +433,21 @@ function ProcessingTab({ user, mode = 'cut', onGoToLab }) {
         </div>
       )}
 
-      <div className="flex justify-between items-center mb-4">
-        {!isLab && onGoToLab ? (
-          <button onClick={onGoToLab} className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 text-sm font-medium border border-purple-200">
-            🔬 ไปหน้าแลป
-          </button>
-        ) : <div />}
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          {!isLab && onGoToLab && (
+            <button onClick={onGoToLab} className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 text-sm font-medium border border-purple-200">
+              🔬 ไปหน้าแลป
+            </button>
+          )}
+          <label className="text-sm text-gray-500">ตั้งแต่</label>
+          <input type="date" className="input text-sm py-1 w-36" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          <label className="text-sm text-gray-500">ถึง</label>
+          <input type="date" className="input text-sm py-1 w-36" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs text-gray-400 hover:text-red-500">✕ ล้าง</button>
+          )}
+        </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2"><Scissors size={16} /> {btnLabel}</button>
       </div>
 
@@ -430,15 +458,17 @@ function ProcessingTab({ user, mode = 'cut', onGoToLab }) {
           </thead>
           <tbody>
             {loading ? <tr><td colSpan={8} className="text-center py-10 text-gray-400">กำลังโหลด...</td></tr>
-              : list.length === 0 ? <tr><td colSpan={8} className="text-center py-10 text-gray-400">ยังไม่มีรายการ</td></tr>
-              : list.map(p => {
+              : filteredList.length === 0 ? <tr><td colSpan={8} className="text-center py-10 text-gray-400">ยังไม่มีรายการ</td></tr>
+              : filteredList.map(p => {
                 const isExpanded = !!expandedRows[p.id];
                 const outputs = expandedRows[p.id];
                 return (
                   <React.Fragment key={p.id}>
                     <tr className={`border-b hover:bg-gray-50 ${isExpanded ? 'bg-purple-50/40' : ''}`}>
                       <td className="px-4 py-3 font-mono text-purple-600 font-medium">{p.process_number}</td>
-                      <td className="px-4 py-3">{new Date(p.created_at).toLocaleDateString('th-TH')}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {new Date(p.created_at).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit' })}
+                      </td>
                       <td className="px-4 py-3">{p.bulk_item_name}</td>
                       <td className="px-4 py-3">{fmt(p.input_qty, 3)} {p.unit}</td>
                       <td className="px-4 py-3 text-green-600">{fmt(p.total_output_qty, 3)} {p.unit}</td>
@@ -449,7 +479,7 @@ function ProcessingTab({ user, mode = 'cut', onGoToLab }) {
                       </td>
                       <td className="px-4 py-3">฿{fmt(p.total_input_cost)}</td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-1.5">
+                        <div className="flex gap-1.5 items-center">
                           <button onClick={() => toggleRow(p.id)}
                             className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${isExpanded ? 'bg-purple-100 text-purple-700' : 'bg-purple-50 text-purple-600 hover:bg-purple-100'}`}>
                             {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -457,6 +487,9 @@ function ProcessingTab({ user, mode = 'cut', onGoToLab }) {
                           </button>
                           <button onClick={() => handleView(p.id)} className="text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded hover:bg-gray-100">
                             รายละเอียด
+                          </button>
+                          <button onClick={() => handleDelete(p)} className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded" title="ลบ">
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       </td>
