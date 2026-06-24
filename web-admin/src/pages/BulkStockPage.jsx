@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { bulkStockAPI, productAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { Plus, Search, ChevronRight, ChevronDown, X, Scissors, PackagePlus, TrendingDown, TrendingUp, BarChart2 } from 'lucide-react';
+import { Plus, Search, ChevronRight, ChevronDown, X, Scissors, PackagePlus, TrendingDown, TrendingUp, BarChart2, Trash2 } from 'lucide-react';
 
 const today = () => new Date().toISOString().split('T')[0];
 const fmt = (n, d = 2) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: d });
@@ -49,6 +49,15 @@ function BulkItemsTab({ user }) {
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
   };
 
+  const handleDelete = async (item) => {
+    if (!window.confirm(`ลบ "${item.name}" ออกจากสต๊อกใหญ่?\n\nรายการนี้จะถูกซ่อนและไม่สามารถใช้งานได้อีก`)) return;
+    try {
+      await bulkStockAPI.deleteItem(item.id);
+      toast.success(`ลบ ${item.name} แล้ว`);
+      load();
+    } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); }
+  };
+
   const handleStockIn = async () => {
     if (!stockInForm.quantity || !stockInForm.cost_per_unit) return toast.error('ระบุจำนวนและราคา');
     setSaving(true);
@@ -69,13 +78,20 @@ function BulkItemsTab({ user }) {
           : items.map(item => (
           <div key={item.id} className={`card border-l-4 ${parseFloat(item.current_qty) <= parseFloat(item.min_qty) ? 'border-l-red-400' : 'border-l-blue-400'}`}>
             <div className="flex items-start justify-between mb-2">
-              <div>
-                <p className="font-semibold">{item.name}</p>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold truncate">{item.name}</p>
                 <p className="text-xs text-gray-400">{item.category || 'ไม่มีหมวดหมู่'}</p>
               </div>
-              {parseFloat(item.current_qty) <= parseFloat(item.min_qty) && (
-                <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">สต๊อกต่ำ</span>
-              )}
+              <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                {parseFloat(item.current_qty) <= parseFloat(item.min_qty) && (
+                  <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">สต๊อกต่ำ</span>
+                )}
+                <button onClick={() => handleDelete(item)}
+                  className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                  title="ลบรายการ">
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
             <div className="space-y-1 text-sm">
               <div className="flex justify-between"><span className="text-gray-500">คงเหลือ</span><span className="font-bold text-lg text-blue-600">{fmt(item.current_qty, 3)} {item.unit}</span></div>

@@ -139,6 +139,7 @@ export const bulkStockAPI = {
   items: (params) => api.get('/bulk-stock/items', { params }),
   createItem: (data) => api.post('/bulk-stock/items', data),
   updateItem: (id, data) => api.put(`/bulk-stock/items/${id}`, data),
+  deleteItem: (id) => api.delete(`/bulk-stock/items/${id}`),
   history: (id) => api.get(`/bulk-stock/items/${id}/history`),
   stockIn: (data) => api.post('/bulk-stock/stock-in', data),
   processingList: (params) => api.get('/bulk-stock/processing', { params }),

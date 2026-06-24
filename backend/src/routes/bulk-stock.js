@@ -46,6 +46,17 @@ router.put('/items/:id', auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.delete('/items/:id', auth, async (req, res, next) => {
+  try {
+    const r = await query(
+      `UPDATE bulk_items SET is_active=false WHERE id=$1 RETURNING id`,
+      [req.params.id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'ไม่พบรายการ' });
+    res.json({ message: 'ลบรายการแล้ว' });
+  } catch (err) { next(err); }
+});
+
 // ─── Stock In ───────────────────────────────────────────────────────────────
 
 router.get('/items/:id/history', auth, async (req, res, next) => {
