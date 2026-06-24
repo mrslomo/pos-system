@@ -62,27 +62,66 @@ router.delete('/items/:id', auth, async (req, res, next) => {
 router.get('/items/:id/history', auth, async (req, res, next) => {
   try {
     const r = await query(
-      `SELECT bsi.*, u.name AS user_name FROM bulk_stock_in bsi
-       LEFT JOIN users u ON u.id=bsi.user_id WHERE bsi.bulk_item_id=$1 ORDER BY bsi.created_at DESC LIMIT 50`,
+      `SELECT bsi.*, u.name AS user_name,
+        CASE WHEN bsi.reference = 'ADJ' THEN 'adjust' ELSE 'stock_in' END AS entry_type
+       FROM bulk_stock_in bsi
+       LEFT JOIN users u ON u.id=bsi.user_id
+       WHERE bsi.bulk_item_id=$1 ORDER BY bsi.created_at DESC LIMIT 100`,
       [req.params.id]
     );
     res.json(r.rows);
   } catch (err) { next(err); }
 });
 
+router.post('/items/:id/adjust', auth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { new_qty, notes, transaction_date, cost_per_unit } = req.body;
+    if (new_qty === undefined || new_qty === null) throw { status: 400, error: 'ต้องระบุจำนวน' };
+    const newQty = parseFloat(new_qty);
+
+    const cur = await client.query('SELECT current_qty, cost_per_unit FROM bulk_items WHERE id=$1', [req.params.id]);
+    if (!cur.rows[0]) throw { status: 404, error: 'ไม่พบรายการ' };
+
+    const currentQty = parseFloat(cur.rows[0].current_qty);
+    const currentCost = parseFloat(cur.rows[0].cost_per_unit);
+    const newCost = cost_per_unit !== undefined ? parseFloat(cost_per_unit) : currentCost;
+    const delta = newQty - currentQty;
+    const txDate = transaction_date ? new Date(transaction_date) : new Date();
+
+    await client.query(
+      `INSERT INTO bulk_stock_in (bulk_item_id, quantity, cost_per_unit, total_cost, reference, user_id, notes, created_at)
+       VALUES ($1,$2,$3,$4,'ADJ',$5,$6,$7)`,
+      [req.params.id, delta, newCost, delta * newCost, req.user.id, notes || null, txDate]
+    );
+
+    const r = await client.query(
+      `UPDATE bulk_items SET current_qty=$1, cost_per_unit=$2 WHERE id=$3 RETURNING *`,
+      [newQty, newCost, req.params.id]
+    );
+    await client.query('COMMIT');
+    res.json(r.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally { client.release(); }
+});
+
 router.post('/stock-in', auth, async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { bulk_item_id, quantity, cost_per_unit, supplier_name, reference, notes } = req.body;
+    const { bulk_item_id, quantity, cost_per_unit, supplier_name, reference, notes, transaction_date } = req.body;
     if (!bulk_item_id || !quantity || !cost_per_unit) throw { status: 400, error: 'ต้องระบุ bulk_item_id, quantity, cost_per_unit' };
     const qty = parseFloat(quantity);
     const cost = parseFloat(cost_per_unit);
+    const txDate = transaction_date ? new Date(transaction_date) : new Date();
 
     await client.query(
-      `INSERT INTO bulk_stock_in (bulk_item_id, quantity, cost_per_unit, total_cost, supplier_name, reference, user_id, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [bulk_item_id, qty, cost, qty * cost, supplier_name || null, reference || null, req.user.id, notes || null]
+      `INSERT INTO bulk_stock_in (bulk_item_id, quantity, cost_per_unit, total_cost, supplier_name, reference, user_id, notes, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [bulk_item_id, qty, cost, qty * cost, supplier_name || null, reference || null, req.user.id, notes || null, txDate]
     );
     const r = await client.query(
       `UPDATE bulk_items

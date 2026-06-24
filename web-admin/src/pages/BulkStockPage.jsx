@@ -8,15 +8,20 @@ const today = () => new Date().toISOString().split('T')[0];
 const fmt = (n, d = 2) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: d });
 
 // ─── Tab: สต๊อกใหญ่ ───────────────────────────────────────────────────────────
+const todayStr = () => new Date().toISOString().split('T')[0];
+
 function BulkItemsTab({ user }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showStockIn, setShowStockIn] = useState(null);
-  const [showEditCost, setShowEditCost] = useState(null); // bulk_item to edit cost
-  const [editCostValue, setEditCostValue] = useState('');
+  const [showAdjust, setShowAdjust] = useState(null);
+  const [adjustForm, setAdjustForm] = useState({ new_qty: '', cost_per_unit: '', notes: '', transaction_date: todayStr() });
+  const [showHistory, setShowHistory] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [form, setForm] = useState({ name: '', unit: 'kg', category: '', min_qty: 0, notes: '' });
-  const [stockInForm, setStockInForm] = useState({ quantity: '', cost_per_unit: '', supplier_name: '', reference: '', notes: '' });
+  const [stockInForm, setStockInForm] = useState({ quantity: '', cost_per_unit: '', supplier_name: '', reference: '', notes: '', transaction_date: todayStr() });
   const [saving, setSaving] = useState(false);
 
   const load = () => { setLoading(true); bulkStockAPI.items({ branch_id: user.branch_id, lab: false }).then(setItems).catch(() => {}).finally(() => setLoading(false)); };
@@ -31,30 +36,11 @@ function BulkItemsTab({ user }) {
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
   };
 
-  const handleEditCost = async () => {
-    if (!editCostValue || parseFloat(editCostValue) <= 0) return toast.error('ระบุราคาต้นทุนที่ถูกต้อง');
-    setSaving(true);
-    try {
-      await bulkStockAPI.updateItem(showEditCost.id, {
-        name: showEditCost.name,
-        unit: showEditCost.unit || 'kg',
-        category: showEditCost.category || '',
-        min_qty: showEditCost.min_qty || 0,
-        notes: showEditCost.notes || '',
-        is_active: showEditCost.is_active !== false,
-        cost_per_unit: parseFloat(editCostValue),
-      });
-      toast.success(`แก้ไขต้นทุน ${showEditCost.name} เป็น ฿${editCostValue}/kg`);
-      setShowEditCost(null); setEditCostValue(''); load();
-    } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
-  };
-
   const handleDelete = async (item) => {
     if (!window.confirm(`ลบ "${item.name}" ออกจากสต๊อกใหญ่?\n\nรายการนี้จะถูกซ่อนและไม่สามารถใช้งานได้อีก`)) return;
     try {
       await bulkStockAPI.deleteItem(item.id);
-      toast.success(`ลบ ${item.name} แล้ว`);
-      load();
+      toast.success(`ลบ ${item.name} แล้ว`); load();
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); }
   };
 
@@ -63,9 +49,38 @@ function BulkItemsTab({ user }) {
     setSaving(true);
     try {
       await bulkStockAPI.stockIn({ bulk_item_id: showStockIn.id, ...stockInForm });
-      toast.success('รับสต๊อกสำเร็จ'); setShowStockIn(null); setStockInForm({ quantity: '', cost_per_unit: '', supplier_name: '', reference: '', notes: '' }); load();
+      toast.success('รับสต๊อกสำเร็จ'); setShowStockIn(null); setStockInForm({ quantity: '', cost_per_unit: '', supplier_name: '', reference: '', notes: '', transaction_date: todayStr() }); load();
     } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
   };
+
+  const openAdjust = (item) => {
+    setShowAdjust(item);
+    setAdjustForm({ new_qty: String(parseFloat(item.current_qty)), cost_per_unit: String(item.cost_per_unit), notes: '', transaction_date: todayStr() });
+  };
+
+  const handleAdjust = async () => {
+    if (adjustForm.new_qty === '') return toast.error('ระบุจำนวนจริง');
+    setSaving(true);
+    try {
+      await bulkStockAPI.adjustItem(showAdjust.id, {
+        new_qty: parseFloat(adjustForm.new_qty),
+        cost_per_unit: adjustForm.cost_per_unit ? parseFloat(adjustForm.cost_per_unit) : undefined,
+        notes: adjustForm.notes,
+        transaction_date: adjustForm.transaction_date,
+      });
+      toast.success(`ปรับสต๊อก ${showAdjust.name} เป็น ${adjustForm.new_qty} ${showAdjust.unit}`);
+      setShowAdjust(null); load();
+    } catch (err) { toast.error(err.error || 'เกิดข้อผิดพลาด'); } finally { setSaving(false); }
+  };
+
+  const openHistory = async (item) => {
+    setShowHistory(item); setHistoryLoading(true); setHistory([]);
+    try { setHistory(await bulkStockAPI.history(item.id)); }
+    catch { toast.error('โหลดประวัติล้มเหลว'); }
+    finally { setHistoryLoading(false); }
+  };
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 
   return (
     <div>
@@ -75,41 +90,40 @@ function BulkItemsTab({ user }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? <p className="text-gray-400 col-span-3 text-center py-10">กำลังโหลด...</p>
           : items.length === 0 ? <p className="text-gray-400 col-span-3 text-center py-10">ยังไม่มีรายการ</p>
-          : items.map(item => (
-          <div key={item.id} className={`card border-l-4 ${parseFloat(item.current_qty) <= parseFloat(item.min_qty) ? 'border-l-red-400' : 'border-l-blue-400'}`}>
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold truncate">{item.name}</p>
-                <p className="text-xs text-gray-400">{item.category || 'ไม่มีหมวดหมู่'}</p>
-              </div>
-              <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                {parseFloat(item.current_qty) <= parseFloat(item.min_qty) && (
-                  <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">สต๊อกต่ำ</span>
-                )}
-                <button onClick={() => handleDelete(item)}
-                  className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                  title="ลบรายการ">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-            <div className="space-y-1 text-sm">
-              <div className="flex justify-between"><span className="text-gray-500">คงเหลือ</span><span className="font-bold text-lg text-blue-600">{fmt(item.current_qty, 3)} {item.unit}</span></div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">ต้นทุน/{item.unit}</span>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">฿{fmt(item.cost_per_unit)}</span>
-                  <button onClick={() => { setShowEditCost(item); setEditCostValue(String(item.cost_per_unit)); }}
-                    className="text-xs text-orange-600 hover:text-orange-700 underline">แก้ไข</button>
+          : items.map(item => {
+            const low = parseFloat(item.current_qty) <= parseFloat(item.min_qty);
+            return (
+              <div key={item.id} className={`card border-l-4 ${low ? 'border-l-red-400' : 'border-l-blue-400'}`}>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-800 truncate">{item.name}</p>
+                    <p className="text-xs text-gray-400">{item.category || 'ไม่มีหมวดหมู่'}</p>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                    {low && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">สต๊อกต่ำ</span>}
+                    <button onClick={() => handleDelete(item)} className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded" title="ลบ"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+
+                <div className="text-center py-3 bg-gray-50 rounded-xl mb-3">
+                  <p className="text-3xl font-bold text-blue-600">{fmt(item.current_qty, 3)}</p>
+                  <p className="text-sm text-gray-400">{item.unit} คงเหลือ</p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button onClick={() => setShowStockIn(item)} className="flex flex-col items-center gap-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium">
+                    <PackagePlus size={14} /><span>รับสต๊อก</span>
+                  </button>
+                  <button onClick={() => openAdjust(item)} className="flex flex-col items-center gap-1 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-medium">
+                    <TrendingDown size={14} /><span>ปรับสต๊อก</span>
+                  </button>
+                  <button onClick={() => openHistory(item)} className="flex flex-col items-center gap-1 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium">
+                    <Search size={14} /><span>ประวัติ</span>
+                  </button>
                 </div>
               </div>
-              <div className="flex justify-between"><span className="text-gray-500">มูลค่าสต๊อก</span><span className="font-medium">฿{fmt(parseFloat(item.current_qty) * parseFloat(item.cost_per_unit))}</span></div>
-            </div>
-            <button onClick={() => setShowStockIn(item)} className="btn-primary text-sm w-full mt-3 flex items-center justify-center gap-1">
-              <PackagePlus size={14} /> รับสต๊อก
-            </button>
-          </div>
-        ))}
+            );
+          })}
       </div>
 
       {/* Create */}
@@ -123,7 +137,7 @@ function BulkItemsTab({ user }) {
                 <div><label className="label">หน่วย</label><input className="input" value={form.unit} onChange={e => setForm(f => ({...f, unit: e.target.value}))} placeholder="kg" /></div>
                 <div><label className="label">หมวดหมู่</label><input className="input" value={form.category} onChange={e => setForm(f => ({...f, category: e.target.value}))} /></div>
               </div>
-              <div><label className="label">แจ้งเตือนเมื่อต่ำกว่า</label><input type="number" className="input" value={form.min_qty} onChange={e => setForm(f => ({...f, min_qty: parseFloat(e.target.value)||0}))} /></div>
+              <div><label className="label">แจ้งเตือนเมื่อต่ำกว่า ({form.unit})</label><input type="number" className="input" value={form.min_qty} onChange={e => setForm(f => ({...f, min_qty: parseFloat(e.target.value)||0}))} /></div>
               <div><label className="label">หมายเหตุ</label><textarea className="input" rows={2} value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} /></div>
             </div>
             <div className="p-5 border-t flex gap-3 justify-end">
@@ -134,29 +148,111 @@ function BulkItemsTab({ user }) {
         </div>
       )}
 
-      {/* Edit Cost */}
-      {showEditCost && (
+      {/* Adjust Stock Modal */}
+      {showAdjust && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
             <div className="flex items-center justify-between p-5 border-b">
-              <h2 className="font-semibold text-lg">แก้ไขต้นทุน — {showEditCost.name}</h2>
-              <button onClick={() => setShowEditCost(null)}><X size={20} /></button>
+              <h2 className="font-semibold text-lg">ปรับสต๊อก — {showAdjust.name}</h2>
+              <button onClick={() => setShowAdjust(null)}><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3">
-              <div className="bg-yellow-50 rounded-lg p-3 text-sm text-yellow-800">
-                ต้นทุนปัจจุบัน: <strong>฿{fmt(showEditCost.cost_per_unit)}/{showEditCost.unit}</strong>
-                <br /><span className="text-xs">การแก้ไขจะมีผลกับการคำนวณซอยสต๊อกครั้งต่อไป</span>
+              <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
+                สต๊อกปัจจุบัน: <strong>{fmt(showAdjust.current_qty, 3)} {showAdjust.unit}</strong>
+                <span className="text-blue-400 ml-2">ต้นทุน ฿{fmt(showAdjust.cost_per_unit)}/{showAdjust.unit}</span>
               </div>
               <div>
-                <label className="label">ต้นทุนใหม่ต่อ{showEditCost.unit} (฿) *</label>
-                <input type="number" className="input" value={editCostValue}
-                  onChange={e => setEditCostValue(e.target.value)}
-                  placeholder="0.00" step="0.01" min="0" autoFocus />
+                <label className="label">จำนวนจริง ({showAdjust.unit}) *</label>
+                <input type="number" className="input text-xl font-bold text-center" value={adjustForm.new_qty}
+                  onChange={e => setAdjustForm(f => ({...f, new_qty: e.target.value}))}
+                  placeholder="0.000" step="0.001" min="0" autoFocus />
+                {adjustForm.new_qty !== '' && (
+                  <p className={`text-xs mt-1 text-center font-medium ${parseFloat(adjustForm.new_qty) < parseFloat(showAdjust.current_qty) ? 'text-red-500' : 'text-green-600'}`}>
+                    {parseFloat(adjustForm.new_qty) < parseFloat(showAdjust.current_qty)
+                      ? `▼ ลด ${fmt(parseFloat(showAdjust.current_qty) - parseFloat(adjustForm.new_qty), 3)} ${showAdjust.unit}`
+                      : parseFloat(adjustForm.new_qty) > parseFloat(showAdjust.current_qty)
+                        ? `▲ เพิ่ม ${fmt(parseFloat(adjustForm.new_qty) - parseFloat(showAdjust.current_qty), 3)} ${showAdjust.unit}`
+                        : '= ไม่เปลี่ยนแปลง'}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="label">ต้นทุน/{showAdjust.unit} (฿) — เว้นว่างถ้าไม่เปลี่ยน</label>
+                <input type="number" className="input" value={adjustForm.cost_per_unit}
+                  onChange={e => setAdjustForm(f => ({...f, cost_per_unit: e.target.value}))}
+                  placeholder={`฿${fmt(showAdjust.cost_per_unit)} (ปัจจุบัน)`} step="0.01" min="0" />
+              </div>
+              <div>
+                <label className="label">วันที่ *</label>
+                <input type="date" className="input" value={adjustForm.transaction_date}
+                  onChange={e => setAdjustForm(f => ({...f, transaction_date: e.target.value}))} />
+              </div>
+              <div>
+                <label className="label">หมายเหตุ</label>
+                <input className="input" value={adjustForm.notes}
+                  onChange={e => setAdjustForm(f => ({...f, notes: e.target.value}))}
+                  placeholder="เช่น นับสต๊อกจริง, สูญหาย..." />
               </div>
             </div>
-            <div className="p-5 border-t flex gap-3 justify-end">
-              <button onClick={() => setShowEditCost(null)} className="btn-secondary">ยกเลิก</button>
-              <button onClick={handleEditCost} disabled={saving} className="btn-primary">{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+            <div className="p-5 border-t flex gap-3">
+              <button onClick={() => setShowAdjust(null)} className="btn-secondary flex-1">ยกเลิก</button>
+              <button onClick={handleAdjust} disabled={saving} className="flex-1 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-medium text-sm disabled:opacity-50">
+                {saving ? 'กำลังบันทึก...' : 'บันทึกการปรับ'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History Modal */}
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b flex-shrink-0">
+              <div>
+                <h2 className="font-semibold text-lg">ประวัติ — {showHistory.name}</h2>
+                <p className="text-xs text-gray-400">คงเหลือปัจจุบัน {fmt(showHistory.current_qty, 3)} {showHistory.unit}</p>
+              </div>
+              <button onClick={() => setShowHistory(null)}><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {historyLoading ? (
+                <div className="py-10 text-center text-gray-400">กำลังโหลด...</div>
+              ) : history.length === 0 ? (
+                <div className="py-10 text-center text-gray-400">ยังไม่มีประวัติ</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      {['วันที่', 'ประเภท', 'จำนวน', 'ต้นทุน/หน่วย', 'หมายเหตุ', 'ผู้บันทึก'].map(h => (
+                        <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {history.map((h, i) => {
+                      const isAdj = h.entry_type === 'adjust';
+                      const qty = parseFloat(h.quantity);
+                      return (
+                        <tr key={i} className={`hover:bg-gray-50 ${isAdj ? 'bg-orange-50/40' : ''}`}>
+                          <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{fmtDate(h.created_at)}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isAdj ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {isAdj ? 'ปรับสต๊อก' : 'รับเข้า'}
+                            </span>
+                          </td>
+                          <td className={`px-4 py-2.5 font-bold ${qty < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            {qty >= 0 ? '+' : ''}{fmt(qty, 3)} {showHistory.unit}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-600">฿{fmt(h.cost_per_unit)}</td>
+                          <td className="px-4 py-2.5 text-gray-500 max-w-[180px] truncate">{h.notes || h.supplier_name || '-'}</td>
+                          <td className="px-4 py-2.5 text-gray-400">{h.user_name || '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>
@@ -180,6 +276,7 @@ function BulkItemsTab({ user }) {
                   <p className="text-gray-600">ต้นทุนรวม: <span className="font-bold text-blue-600">฿{fmt(parseFloat(stockInForm.quantity) * parseFloat(stockInForm.cost_per_unit))}</span></p>
                 </div>
               )}
+              <div><label className="label">วันที่รับ</label><input type="date" className="input" value={stockInForm.transaction_date} onChange={e => setStockInForm(f => ({...f, transaction_date: e.target.value}))} /></div>
               <div><label className="label">ผู้ขาย/แหล่งที่มา</label><input className="input" value={stockInForm.supplier_name} onChange={e => setStockInForm(f => ({...f, supplier_name: e.target.value}))} /></div>
               <div><label className="label">อ้างอิง (เลขบิล/ใบส่งของ)</label><input className="input" value={stockInForm.reference} onChange={e => setStockInForm(f => ({...f, reference: e.target.value}))} /></div>
               <div><label className="label">หมายเหตุ</label><textarea className="input" rows={2} value={stockInForm.notes} onChange={e => setStockInForm(f => ({...f, notes: e.target.value}))} /></div>
